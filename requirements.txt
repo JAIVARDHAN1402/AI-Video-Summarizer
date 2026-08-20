@@ -1,0 +1,40 @@
+# Core
+python-dotenv==1.0.1
+numpy==1.26.4
+tqdm==4.66.4
+
+# Media
+# yt-dlp is pinned loosely (min version, not ==) because YouTube changes its
+# extraction internals often and yt-dlp ships near-weekly fixes; an old pin
+# reliably breaks with "Please sign in" bot-check errors. Re-run
+# `pip install --upgrade yt-dlp` if downloads start failing.
+yt-dlp>=2026.8.19
+moviepy==1.0.3
+imageio-ffmpeg==0.5.1
+opencv-python==4.10.0.84
+scenedetect==0.6.4
+
+# ASR
+faster-whisper==1.0.3
+youtube-transcript-api==0.6.2
+
+# Vision
+ultralytics==8.2.0
+open-clip-torch==2.24.0
+torch==2.3.1
+torchvision==0.18.1
+
+# NLP
+transformers==4.44.0
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0
+tiktoken==0.7.0
+requests==2.32.3  # optional Gemini REST backend; also a transitive dep of huggingface_hub
+
+# UI
+streamlit==1.37.0
+
+# Eval (dev only)
+rouge-score==0.1.2
+bert-score==0.3.13
+pytest==8.3.2

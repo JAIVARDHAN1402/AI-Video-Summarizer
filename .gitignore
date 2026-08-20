@@ -1,0 +1,32 @@
+# Cache / generated artifacts
+cache/
+*.mp4
+*.wav
+*.mkv
+*.webm
+# YOLO weights (ultralytics downloads these into the cwd)
+*.pt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Env
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Eval outputs
+eval/results_rouge.json
+eval/results_keyframe_f1.json
+eval/results_qa_eval.json

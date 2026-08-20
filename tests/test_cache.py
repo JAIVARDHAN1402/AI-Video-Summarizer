@@ -1,0 +1,124 @@
+"""Unit tests for core.cache. No ML dependencies required."""
+
+from __future__ import annotations
+
+import pytest
+
+import config
+from core import cache
+
+
+@pytest.fixture(autouse=True)
+def isolated_cache_root(tmp_path, monkeypatch):
+    """Point config.CACHE_ROOT at a throwaway directory for every test."""
+    monkeypatch.setattr(config, "CACHE_ROOT", tmp_path / "cache")
+    yield
+
+
+def test_get_video_id_is_deterministic_and_short():
+    vid_a = cache.get_video_id("https://youtube.com/watch?v=abc123")
+    vid_b = cache.get_video_id("https://youtube.com/watch?v=abc123")
+    vid_c = cache.get_video_id("https://youtube.com/watch?v=different")
+
+    assert vid_a == vid_b
+    assert vid_a != vid_c
+    assert len(vid_a) == 16
+
+
+def test_get_cache_dir_creates_directory():
+    video_id = "testvid0000000a"
+    cache_dir = cache.get_cache_dir(video_id)
+
+    assert cache_dir.exists()
+    assert cache_dir.is_dir()
+    assert cache_dir.name == video_id
+
+
+def test_write_and_read_json_round_trip():
+    video_id = "testvid0000000b"
+    data = {"video_id": video_id, "duration_sec": 123.4, "nested": {"a": [1, 2, 3]}}
+
+    cache.write_json(video_id, "meta", data)
+    result = cache.read_json(video_id, "meta")
+
+    assert result == data
+
+
+def test_read_json_returns_none_when_missing():
+    assert cache.read_json("nonexistent0000", "meta") is None
+
+
+def test_read_json_returns_none_on_corrupt_file():
+    video_id = "testvid0000000c"
+    cache_dir = cache.get_cache_dir(video_id)
+    (cache_dir / "meta.json").write_text("{not valid json", encoding="utf-8")
+
+    assert cache.read_json(video_id, "meta") is None
+
+
+def test_artifact_exists_reflects_presence():
+    video_id = "testvid0000000d"
+    assert cache.artifact_exists(video_id, "transcript") is False
+
+    cache.write_json(video_id, "transcript", {"language": "en"})
+    assert cache.artifact_exists(video_id, "transcript") is True
+
+
+def test_state_defaults_when_unset():
+    state = cache.get_state("testvid0000000e")
+    assert state["stage"] == "not_started"
+    assert state["progress"] == 0.0
+    assert state["error"] is None
+
+
+def test_set_state_then_get_state_round_trip():
+    video_id = "testvid0000000f"
+    cache.set_state(video_id, stage="transcribe", progress=0.42,
+                     message="Transcribing audio...")
+
+    state = cache.get_state(video_id)
+    assert state["stage"] == "transcribe"
+    assert state["progress"] == 0.42
+    assert state["message"] == "Transcribing audio..."
+    assert state["error"] is None
+    assert "updated_at" in state
+
+
+def test_set_state_with_error():
+    video_id = "testvid0000000g"
+    cache.set_state(video_id, stage="error", progress=0.5,
+                     message="failed", error="boom")
+
+    state = cache.get_state(video_id)
+    assert state["stage"] == "error"
+    assert state["error"] == "boom"
+
+
+def test_clear_cache_removes_directory():
+    video_id = "testvid0000000h"
+    cache_dir = cache.get_cache_dir(video_id)
+    cache.write_json(video_id, "meta", {"video_id": video_id})
+    assert cache_dir.exists()
+
+    cache.clear_cache(video_id)
+    assert not cache_dir.exists()
+
+
+def test_clear_cache_on_missing_video_is_noop():
+    cache.clear_cache("never-existed-0")  # should not raise
+
+
+def test_list_cached_videos_orders_most_recent_first(monkeypatch):
+    import time
+
+    cache.get_cache_dir("older0000000000")
+    time.sleep(0.01)
+    cache.get_cache_dir("newer0000000000")
+
+    videos = cache.list_cached_videos()
+    assert videos[0] == "newer0000000000"
+    assert "older0000000000" in videos
+
+
+def test_list_cached_videos_empty_when_no_cache_root():
+    assert cache.list_cached_videos() == []
