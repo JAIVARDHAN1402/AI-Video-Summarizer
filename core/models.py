@@ -123,6 +123,7 @@ class Scene:
     end: float
     keyframe_path: str
     objects: list[ObjectTag] = field(default_factory=list)
+    ocr_text: str = ""  # on-screen text (slides/whiteboards) read via EasyOCR
     clip_embedding_idx: int = -1
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +133,7 @@ class Scene:
             "end": self.end,
             "keyframe_path": self.keyframe_path,
             "objects": [o.to_dict() for o in self.objects],
+            "ocr_text": self.ocr_text,
             "clip_embedding_idx": self.clip_embedding_idx,
         }
 
@@ -143,6 +145,7 @@ class Scene:
             end=data["end"],
             keyframe_path=data["keyframe_path"],
             objects=[ObjectTag.from_dict(o) for o in data.get("objects", [])],
+            ocr_text=data.get("ocr_text", ""),
             clip_embedding_idx=data.get("clip_embedding_idx", -1),
         )
 
@@ -181,6 +184,7 @@ class FusedBlock:
     visual_tags: list[str]
     text: str
     fused_text: str
+    ocr_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -336,3 +340,24 @@ class JobState:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "JobState":
         return cls(**data)
+
+
+def describe_exception(exc: BaseException) -> str:
+    """A human-readable reason for a failure, never an empty string.
+
+    ``str(exc)`` is empty for a surprising number of exception types —
+    MemoryError, CancelledError, and the control-flow exceptions web
+    frameworks raise among them. Formatting a message as f"...failed: {exc}"
+    then produces "failed:" with nothing after it, which tells the user
+    nothing and is impossible to debug from a screenshot.
+
+    Falls back to the exception type, and appends the underlying cause when
+    the failure was chained from another one.
+    """
+    reason = str(exc).strip() or type(exc).__name__
+    cause = exc.__cause__ or exc.__context__
+    if cause is not None and not isinstance(cause, type(exc)):
+        cause_reason = str(cause).strip() or type(cause).__name__
+        if cause_reason and cause_reason not in reason:
+            reason = f"{reason} (caused by {cause_reason})"
+    return reason

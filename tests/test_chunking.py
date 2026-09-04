@@ -24,17 +24,28 @@ def tokenizer():
 
 
 def _make_blocks(n: int, seconds_per_block: float = 10.0, words_per_block: int = 30):
-    """Synthetic fused blocks simulating a long lecture transcript."""
+    """Synthetic fused blocks simulating a long lecture transcript.
+
+    Mirrors the schema core.fuse.fuse() actually writes: the map stage reads
+    ``text`` (what was said) and ``ocr_text`` (what was on screen), not the
+    ``fused_text`` display string, which inlines timestamps and visual tags
+    that would otherwise be fed to the summarizer as if they were narration.
+    """
     blocks = []
     filler = " ".join(f"concept{i}" for i in range(words_per_block))
     for i in range(n):
         start = i * seconds_per_block
         end = start + seconds_per_block
+        text = f"[{i:04d}] Discussion segment {i}: {filler}."
         blocks.append({
             "id": i,
             "start": start,
             "end": end,
-            "fused_text": f"[{i:04d}] Discussion segment {i}: {filler}.",
+            "scene_ids": [i],
+            "visual_tags": [],
+            "ocr_text": "",
+            "text": text,
+            "fused_text": f"[00:00-00:10] (visual: ) {text}",
         })
     return blocks
 

@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "streamlit-app",
+      "name": "video-summarizer",
       "runtimeExecutable": ".venv/Scripts/streamlit.exe",
-      "runtimeArgs": ["run", "app.py", "--server.headless", "true"],
+      "runtimeArgs": ["run", "app.py", "--server.headless", "true", "--server.port", "8501"],
       "port": 8501
     }
   ]

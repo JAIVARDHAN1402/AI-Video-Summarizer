@@ -44,16 +44,20 @@ def _fuse_segments_and_scenes(
                 matched.append(seg)
 
         text = " ".join(seg["text"] for seg in matched).strip()
+        ocr_text = (scene.get("ocr_text") or "").strip()
 
-        if not text and (s_end - s_start) < _MIN_BLOCK_LEN_TO_KEEP_EMPTY_SEC:
+        # On-screen text (a slide, a whiteboard) is itself meaningful content,
+        # so a short silent scene is only dropped if it has neither speech
+        # nor readable text.
+        if not text and not ocr_text and (s_end - s_start) < _MIN_BLOCK_LEN_TO_KEEP_EMPTY_SEC:
             continue
 
         visual_tags = sorted({obj["label"] for obj in scene.get("objects", [])})
         tags_str = ", ".join(visual_tags)
-        fused_text = (
-            f"[{_format_mmss(s_start)}-{_format_mmss(s_end)}] "
-            f"(visual: {tags_str}) {text}"
-        ).strip()
+        fused_text = f"[{_format_mmss(s_start)}-{_format_mmss(s_end)}] (visual: {tags_str})"
+        if ocr_text:
+            fused_text += f" (on-screen text: {ocr_text})"
+        fused_text = f"{fused_text} {text}".strip()
 
         blocks.append({
             "id": next_id,
@@ -61,6 +65,7 @@ def _fuse_segments_and_scenes(
             "end": s_end,
             "scene_ids": [scene["id"]],
             "visual_tags": visual_tags,
+            "ocr_text": ocr_text,
             "text": text,
             "fused_text": fused_text,
         })
