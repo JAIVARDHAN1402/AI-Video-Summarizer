@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 VideoType = Literal[
     "lecture", "coding", "meeting", "interview", "talk", "news", "documentary", "other"
@@ -17,7 +17,14 @@ Profile = Literal["fast", "balanced", "accurate"]
 
 
 class CreateJobRequest(BaseModel):
-    url: str = Field(..., description="A YouTube or other yt-dlp-supported URL.")
+    url: Optional[str] = Field(
+        None, description="A YouTube or other yt-dlp-supported URL. "
+                          "Give this or upload_id, not both.",
+    )
+    upload_id: Optional[str] = Field(
+        None, description="id returned by POST /api/uploads, to process a file "
+                          "already uploaded instead of a URL.",
+    )
     video_type: VideoType = "lecture"
     topic: str = ""
     profile: Profile = "balanced"
@@ -27,6 +34,18 @@ class CreateJobRequest(BaseModel):
         description="Wall-clock target in seconds. Overrides the profile's "
                     "default budget for routing and SLA scoring.",
     )
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> "CreateJobRequest":
+        if bool(self.url and self.url.strip()) == bool(self.upload_id and self.upload_id.strip()):
+            raise ValueError("provide exactly one of 'url' or 'upload_id'")
+        return self
+
+
+class UploadResponse(BaseModel):
+    upload_id: str
+    filename: str
+    bytes: int
 
 
 class JobRef(BaseModel):

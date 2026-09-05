@@ -24,18 +24,21 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
-from server import config, jobs, schemas, scheduler
+from server import auth, config, jobs, schemas, scheduler, storage
 from server.db import JobStatus, init_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 logger = logging.getLogger("server")
 
-app = FastAPI(title=config.API_TITLE, version=config.API_VERSION)
+app = FastAPI(
+    title=config.API_TITLE, version=config.API_VERSION,
+    dependencies=[Depends(auth.require_auth)],
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
@@ -55,6 +58,8 @@ def _startup() -> None:
         warm.start()
     except Exception:
         logger.warning("model warm-up could not start", exc_info=True)
+    storage.get_storage()  # log the backend, fail fast on a bad S3 config
+    logger.info("auth: %s", "enabled" if config.AUTH_ENABLED else "disabled (open)")
     if config.QUEUE_BACKEND == "redis":
         logger.info("API ready — queue backend: redis (%s); workers run separately", config.REDIS_URL)
     else:
@@ -64,13 +69,34 @@ def _startup() -> None:
 # --- Jobs -------------------------------------------------------------------
 
 
+@app.post("/api/uploads", response_model=schemas.UploadResponse, status_code=201)
+async def upload_file(file: UploadFile = File(...)) -> schemas.UploadResponse:
+    """Store a video file and return an ``upload_id`` to pass to POST /api/jobs."""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in config.UPLOAD_ALLOWED_EXTS:
+        raise HTTPException(415, f"unsupported type {ext!r}; allowed: {sorted(config.UPLOAD_ALLOWED_EXTS)}")
+    try:
+        info = await asyncio.to_thread(
+            storage.get_storage().save_upload, file.file, file.filename or f"upload{ext}"
+        )
+    except storage.StorageError as e:
+        raise HTTPException(413, str(e)) from e
+    return schemas.UploadResponse(upload_id=info["upload_id"], filename=info["filename"], bytes=info["bytes"])
+
+
 @app.post("/api/jobs", response_model=schemas.JobRef, status_code=202)
 def create_job(req: schemas.CreateJobRequest) -> schemas.JobRef:
-    url = req.url.strip()
-    if not url:
-        raise HTTPException(422, "url is required")
+    if req.upload_id:
+        try:
+            source_ref = str(storage.get_storage().upload_path(req.upload_id.strip()))
+        except storage.StorageError as e:
+            raise HTTPException(404, str(e)) from e
+        is_upload = True
+    else:
+        source_ref, is_upload = req.url.strip(), False
+
     job = jobs.create_job(
-        source_ref=url, is_upload=False, video_type=req.video_type,
+        source_ref=source_ref, is_upload=is_upload, video_type=req.video_type,
         topic=req.topic.strip(), profile=req.profile, force=req.force,
         sla_sec=req.sla_sec,
     )
@@ -144,10 +170,23 @@ def _keyframe_urls(video_id: str, data: dict | None) -> dict | None:
     return data
 
 
+def _ensure_local_artifacts(video_id: str) -> None:
+    """With S3 storage, pull this video's cache tree down if it isn't local
+    (e.g. the job ran on another worker). No-op for local storage."""
+    import config as core_config
+
+    cache_dir = core_config.CACHE_ROOT / video_id
+    try:
+        storage.get_storage().fetch_artifacts(video_id, cache_dir)
+    except Exception:
+        logger.warning("could not fetch artifacts for %s from storage", video_id, exc_info=True)
+
+
 @app.get("/api/videos/{video_id}", response_model=schemas.VideoResult)
 def video_result(video_id: str) -> schemas.VideoResult:
     from core import pipeline
 
+    _ensure_local_artifacts(video_id)
     meta = pipeline.get_meta(video_id)
     if meta is None:
         raise HTTPException(404, "video not found")
@@ -169,6 +208,8 @@ def keyframe(video_id: str, name: str) -> FileResponse:
     # Guard against path traversal — only a bare filename under this video's dir.
     safe = Path(name).name
     path = core_config.CACHE_ROOT / video_id / "keyframes" / safe
+    if not path.exists():
+        _ensure_local_artifacts(video_id)
     if not path.exists() or path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
         raise HTTPException(404, "keyframe not found")
     return FileResponse(path, media_type="image/jpeg")

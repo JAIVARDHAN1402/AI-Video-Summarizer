@@ -89,13 +89,22 @@ async function j<T>(res: Response): Promise<T> {
 
 export const api = {
   createJob: (body: {
-    url: string; video_type: VideoType; topic: string; profile: Profile; force?: boolean;
+    url?: string; upload_id?: string;
+    video_type: VideoType; topic: string; profile: Profile; force?: boolean;
   }) =>
     fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => j<{ id: string; status: string }>(r)),
+
+  upload: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch("/api/uploads", { method: "POST", body: form }).then((r) =>
+      j<{ upload_id: string; filename: string; bytes: number }>(r),
+    );
+  },
 
   job: (id: string) => fetch(`/api/jobs/${id}`).then((r) => j<JobView>(r)),
 

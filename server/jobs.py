@@ -13,11 +13,12 @@ import logging
 import queue as _queue
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 from server import config
 from server.db import Job, JobStatus, session
-from server import scheduler
+from server import scheduler, storage
 
 logger = logging.getLogger("server.jobs")
 
@@ -53,7 +54,7 @@ def create_job(
     # Route it: pick the worker class for this job against its SLA. Best-effort
     # — a routing failure must not stop the job being queued.
     try:
-        preview = _preview_duration(source_ref)
+        preview = _preview_duration(source_ref, is_upload)
         sla = sla_sec or _PROFILE_BUDGET.get(profile) or config.DEFAULT_BUDGET_SEC
         decision = scheduler.route(preview, video_type, sla)
         with session() as db:
@@ -74,12 +75,12 @@ def create_job(
     return job
 
 
-def _preview_duration(source_ref: str) -> float:
+def _preview_duration(source_ref: str, is_upload: bool = False) -> float:
     """Cheap duration lookup for routing, before the job runs.
 
-    Uses a cached meta.json if the video was seen before, else a yt-dlp
-    metadata probe. Falls back to a neutral 15 minutes so routing still has a
-    number to work with.
+    Uses a cached meta.json if the video was seen before, else ffprobe for an
+    uploaded file or a yt-dlp metadata probe for a URL. Falls back to a neutral
+    15 minutes so routing still has a number to work with.
     """
     from core import cache, ingest
 
@@ -87,6 +88,8 @@ def _preview_duration(source_ref: str) -> float:
         cached = cache.read_json(cache.get_video_id(source_ref), "meta")
         if cached and cached.get("duration_sec"):
             return float(cached["duration_sec"])
+        if is_upload:
+            return float(ingest._probe(Path(source_ref)).get("duration_sec") or 900.0)
         return float(ingest.probe_remote(source_ref).get("duration_sec") or 900.0)
     except Exception:
         return 900.0
@@ -211,6 +214,17 @@ def run_job(
             scheduler.record_outcome(outcome_row)
     except Exception:
         logger.warning("could not record scheduler outcome for %s", job_id, exc_info=True)
+
+    if config.MIRROR_ARTIFACTS:
+        try:
+            import config as core_config
+
+            storage.get_storage().mirror_artifacts(
+                result["video_id"], core_config.CACHE_ROOT / result["video_id"]
+            )
+        except Exception:
+            logger.warning("artifact mirror failed for %s", result["video_id"], exc_info=True)
+
     logger.info(
         "job %s done on %s (speed %.2f) -> video %s",
         job_id, wc, speed, result["video_id"],

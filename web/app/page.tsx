@@ -23,26 +23,32 @@ const PROFILES: { value: Profile; label: string; hint: string }[] = [
 
 export default function Home() {
   const router = useRouter();
+  const [mode, setMode] = useState<"url" | "upload">("url");
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [videoType, setVideoType] = useState<VideoType>("lecture");
   const [topic, setTopic] = useState("");
   const [profile, setProfile] = useState<Profile>("balanced");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const ready = mode === "url" ? !!url.trim() : !!file;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return;
+    if (!ready) return;
     setBusy(true);
     setError(null);
     try {
-      const { id } = await api.createJob({
-        url: url.trim(),
-        video_type: videoType,
-        topic: topic.trim(),
-        profile,
-      });
-      router.push(`/jobs/${id}`);
+      const common = { video_type: videoType, topic: topic.trim(), profile };
+      let job;
+      if (mode === "upload" && file) {
+        const { upload_id } = await api.upload(file);
+        job = await api.createJob({ upload_id, ...common });
+      } else {
+        job = await api.createJob({ url: url.trim(), ...common });
+      }
+      router.push(`/jobs/${job.id}`);
     } catch (err: any) {
       setError(err.message || "Could not start the job.");
       setBusy(false);
@@ -65,15 +71,50 @@ export default function Home() {
       </div>
 
       <form onSubmit={submit} className="card mx-auto max-w-[760px] p-6">
-        <label className="label" htmlFor="url">Video URL</label>
-        <input
-          id="url"
-          className="input"
-          placeholder="https://www.youtube.com/watch?v=..."
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          autoFocus
-        />
+        <div className="mb-3 flex w-fit gap-0.5 rounded border border-border bg-surface p-1">
+          {(["url", "upload"] as const).map((m) => (
+            <button
+              type="button"
+              key={m}
+              onClick={() => setMode(m)}
+              className={`rounded-xs px-3.5 py-1.5 text-[0.82rem] font-semibold capitalize transition-colors ${
+                mode === m ? "bg-surface-active text-ink" : "text-ink-dim hover:text-ink"
+              }`}
+            >
+              {m === "url" ? "Paste a link" : "Upload a file"}
+            </button>
+          ))}
+        </div>
+
+        {mode === "url" ? (
+          <>
+            <label className="label" htmlFor="url">Video URL</label>
+            <input
+              id="url"
+              className="input"
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              autoFocus
+            />
+          </>
+        ) : (
+          <>
+            <label className="label" htmlFor="file">Video file</label>
+            <input
+              id="file"
+              type="file"
+              className="input file:mr-3 file:rounded file:border-0 file:bg-surface-active file:px-3 file:py-1 file:text-ink"
+              accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+            {file && (
+              <p className="mt-1 text-[0.75rem] text-ink-dim">
+                {file.name} · {(file.size / 1e6).toFixed(1)} MB
+              </p>
+            )}
+          </>
+        )}
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-[1fr_1.4fr]">
           <div>
@@ -128,7 +169,7 @@ export default function Home() {
           </p>
         )}
 
-        <button className="btn btn-primary mt-5 w-full" disabled={busy || !url.trim()}>
+        <button className="btn btn-primary mt-5 w-full" disabled={busy || !ready}>
           {busy ? "Starting…" : "Summarize video"}
         </button>
       </form>

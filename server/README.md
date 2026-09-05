@@ -17,14 +17,20 @@ Open `http://localhost:8000/docs` for the interactive API.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/jobs` | Submit a URL — `{url, video_type, topic, profile, force}` |
+| `POST` | `/api/uploads` | Upload a video file (multipart `file`) → `{upload_id, filename, bytes}` |
+| `POST` | `/api/jobs` | Submit `{url \| upload_id, video_type, topic, profile, force, sla_sec?}` (exactly one of `url`/`upload_id`) |
 | `GET` | `/api/jobs` | Recent jobs |
 | `GET` | `/api/jobs/{id}` | One job's status + live progress |
 | `GET` | `/api/jobs/{id}/events` | SSE stream of progress until terminal |
 | `GET` | `/api/videos/{video_id}` | Finished result: understanding, scenes, transcript |
-| `GET` | `/api/videos/{video_id}/keyframes/{name}` | A keyframe image |
+| `GET` | `/api/videos/{video_id}/keyframes/{name}` | A keyframe image (never requires auth) |
 | `POST` | `/api/videos/{video_id}/ask` | Grounded Q&A — `{question}` |
-| `GET` | `/api/health` | Status, queue backend, hardware profile |
+| `GET` | `/api/scheduler/{classes,sla,preview}` | Worker classes, SLA evidence, routing preview |
+| `GET` | `/api/health` | Status, queue backend, auth/storage mode, hardware profile |
+
+All `/api/*` routes except `/api/health` and the keyframe images require
+`Authorization: Bearer <token>` **when auth is enabled** (see below); otherwise
+they're open.
 
 ## Configuration (env)
 
@@ -39,6 +45,34 @@ Open `http://localhost:8000/docs` for the interactive API.
 | `VS_LOCAL_FLEET` | — | JSON list of in-process worker classes, e.g. `[{"class":"cpu-fast","speed":1.0},{"class":"cpu-slow","speed":0.3}]` |
 | `VS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated frontend origins |
 | `GEMINI_API_KEY` | — | Enables the LLM understanding layer (see main README) |
+| `VS_API_KEYS` | — | Comma-separated bearer tokens. Setting any turns auth on |
+| `VS_JWT_SECRET` | — | HS* secret / RS* public key for JWT bearer auth (needs PyJWT). Turns auth on |
+| `VS_JWT_ALGORITHM` / `VS_JWT_AUDIENCE` | `HS256` / — | JWT verification params |
+| `VS_MAX_UPLOAD_MB` | `512` | Upload size cap |
+| `VS_UPLOAD_EXTS` | `.mp4,.mov,.mkv,.webm,.avi,.m4v` | Accepted upload extensions |
+| `VS_STORAGE_BACKEND` | `local` | `local` or `s3` (AWS S3 / Cloudflare R2 / MinIO; needs boto3) |
+| `VS_S3_BUCKET` / `VS_S3_ENDPOINT_URL` / `VS_S3_REGION` / `VS_S3_PREFIX` | — | S3 target (endpoint URL points at R2/MinIO) |
+| `VS_MIRROR_ARTIFACTS` | `0` | With `s3`, copy each finished `cache/<video_id>/` tree to the bucket |
+
+## Auth
+
+Off by default — local dev and the bundled frontend need no setup. Set
+`VS_API_KEYS` and/or `VS_JWT_SECRET` to require `Authorization: Bearer <token>`
+on every `/api` route except `/api/health` and keyframe images (referenced by
+bare `<img>` tags that can't send headers). API keys are static strings; JWTs
+are verified with PyJWT against `VS_JWT_SECRET`. A JWT deployment fronts this
+with Clerk/Auth0/etc. and passes their token straight through.
+
+## Uploads & storage
+
+`POST /api/uploads` streams the file to the storage backend, capping size and
+checking the extension, and returns an `upload_id` (the content SHA-256, so
+re-uploading the same file is free). Pass that as `upload_id` to `POST /api/jobs`
+instead of `url`. With `VS_STORAGE_BACKEND=s3` the upload is also pushed to the
+bucket, `upload_id`s are pulled back down on any worker that needs them, and —
+with `VS_MIRROR_ARTIFACTS=1` — finished `cache/<video_id>/` trees are mirrored
+up so a different machine can serve `GET /api/videos/{id}`. `server/storage.py`
+is the whole seam; `core/` still only ever reads and writes `cache/` locally.
 
 ## The worker fleet (the scheduler substrate)
 

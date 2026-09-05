@@ -31,6 +31,36 @@ DATA_ROOT = Path(os.getenv("VS_DATA_ROOT", str(PACKAGE_ROOT / "server_data")))
 UPLOAD_DIR = DATA_ROOT / "uploads"
 
 MAX_UPLOAD_BYTES = int(os.getenv("VS_MAX_UPLOAD_MB", "512")) * 1024 * 1024
+# Extensions accepted by POST /api/uploads (lowercase, with dot).
+UPLOAD_ALLOWED_EXTS = {
+    e if e.startswith(".") else f".{e}"
+    for e in os.getenv("VS_UPLOAD_EXTS", ".mp4,.mov,.mkv,.webm,.avi,.m4v").lower().split(",")
+    if e.strip()
+}
+
+# --- Object storage -------------------------------------------------------
+# "local": uploads + artifacts stay on disk (UPLOAD_DIR, cache/).
+# "s3":    uploads and finished cache/<video_id>/ trees are mirrored to an
+#          S3-compatible bucket (AWS S3, Cloudflare R2, MinIO). Needs boto3 and
+#          VS_S3_BUCKET; VS_S3_ENDPOINT_URL points it at R2/MinIO.
+STORAGE_BACKEND = os.getenv("VS_STORAGE_BACKEND", "local").strip().lower()
+S3_BUCKET = os.getenv("VS_S3_BUCKET", "").strip()
+S3_ENDPOINT_URL = os.getenv("VS_S3_ENDPOINT_URL", "").strip() or None
+S3_REGION = os.getenv("VS_S3_REGION", "").strip() or None
+S3_PREFIX = os.getenv("VS_S3_PREFIX", "video-summarizer").strip("/")
+# Copy each finished cache/<video_id>/ tree to object storage when a job ends.
+MIRROR_ARTIFACTS = os.getenv("VS_MIRROR_ARTIFACTS", "0").strip().lower() in {"1", "true", "yes"}
+
+# --- Auth ---------------------------------------------------------------
+# Off by default so local dev and the bundled frontend work with no setup.
+# Set VS_API_KEYS (comma-separated bearer tokens) and/or VS_JWT_SECRET to
+# turn it on; then every /api route except health + keyframe images requires
+# `Authorization: Bearer <token>`.
+API_KEYS = {k.strip() for k in os.getenv("VS_API_KEYS", "").split(",") if k.strip()}
+JWT_SECRET = os.getenv("VS_JWT_SECRET", "").strip() or None
+JWT_ALGORITHM = os.getenv("VS_JWT_ALGORITHM", "HS256").strip()
+JWT_AUDIENCE = os.getenv("VS_JWT_AUDIENCE", "").strip() or None
+AUTH_ENABLED = bool(API_KEYS or JWT_SECRET)
 
 # --- Queue -----------------------------------------------------------------
 # "inprocess": a local worker pool inside the API process — zero infra, good
