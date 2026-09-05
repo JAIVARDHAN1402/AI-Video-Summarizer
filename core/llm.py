@@ -76,6 +76,7 @@ class LLMClient:
         schema: Optional[dict[str, Any]] = None,
         temperature: float = 0.4,
         max_output_tokens: int = 8192,
+        thinking_budget: int = 0,
         retries: int = 3,
     ) -> LLMResult:
         """Return the model's reply parsed as JSON.
@@ -108,10 +109,15 @@ class LLMClient:
             )
             prompt = prompt[:MAX_CONTEXT_CHARS]
 
+        # Gemini 3.x Flash is a reasoning model. Left unconstrained it burns
+        # the whole output budget on hidden "thinking" and returns an empty
+        # reply; thinkingBudget=0 gives a direct answer, a small positive
+        # budget lets it plan structure first.
         generation_config: dict[str, Any] = {
             "temperature": temperature,
             "maxOutputTokens": max_output_tokens,
             "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingBudget": max(thinking_budget, 0)},
         }
         if schema is not None:
             generation_config["responseSchema"] = schema
@@ -184,8 +190,11 @@ class LLMClient:
 
         if finish_reason == "SAFETY":
             raise LLMError("the reply was blocked by the safety filter")
-        if finish_reason == "MAX_TOKENS" and not text:
-            raise LLMError("the reply hit the token limit before producing anything")
+        if finish_reason in ("MAX_TOKENS", "MALFORMED_FUNCTION_CALL") and not text:
+            raise LLMError(
+                "the model produced no text before hitting the token limit "
+                "(raise max_output_tokens or lower thinking_budget)"
+            )
         if not text:
             raise LLMError(f"Gemini returned an empty reply (finishReason={finish_reason})")
 

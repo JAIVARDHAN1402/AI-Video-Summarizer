@@ -267,15 +267,23 @@ QA_GENERATION_CHUNKS = 3
 QA_CONTEXT_MAX_TOKENS = 380
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 USE_GEMINI = GEMINI_API_KEY is not None
-GEMINI_MODEL = "gemini-2.0-flash"  # Q&A generation backend (core/qa.py)
+GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backend (core/qa.py)
 
 # --- Understanding layer (core/understand.py) -----------------------------
 # When a provider key is set, the pipeline uses an LLM to produce a teachable
 # explanation instead of the BART/flan-t5 map-reduce. Gemini Flash: ~1M-token
 # context (the whole transcript fits, no lossy chunking), fast, cheap.
-UNDERSTANDING_MODEL = os.getenv("VS_UNDERSTANDING_MODEL", "gemini-2.0-flash")
+# gemini-2.5-flash: stable, generally available, 1M context, cheap. A hard-pinned
+# preview model (gemini-2.0-flash) got deprecated out from under us; pin a
+# specific dated version via VS_UNDERSTANDING_MODEL for reproducibility.
+UNDERSTANDING_MODEL = os.getenv("VS_UNDERSTANDING_MODEL", "gemini-2.5-flash")
 UNDERSTANDING_TEMPERATURE = float(os.getenv("VS_UNDERSTANDING_TEMPERATURE", "0.35"))
 UNDERSTANDING_MAX_OUTPUT_TOKENS = int(os.getenv("VS_UNDERSTANDING_MAX_TOKENS", "16384"))
+# Reasoning-model thinking budget (output tokens spent planning before the
+# visible reply). 0 = answer directly (fastest, cheapest); higher can help
+# on coding videos where the model benefits from reasoning through the code.
+UNDERSTANDING_THINKING_BUDGET = int(os.getenv("VS_UNDERSTANDING_THINKING", "0"))
+UNDERSTANDING_THINKING_BUDGET_CODING = int(os.getenv("VS_UNDERSTANDING_THINKING_CODING", "4096"))
 # Fall back to the local BART/flan-t5 summarizer if the LLM call fails, rather
 # than failing the whole run. Set False to surface LLM errors instead.
 UNDERSTANDING_FALLBACK_TO_LOCAL = True

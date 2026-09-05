@@ -256,12 +256,17 @@ def _format_scenes(scenes: list[dict[str, Any]]) -> str:
     Only scenes that carry information (readable text, or a distinctive object
     set) are worth the tokens; a plain talking-head scene adds nothing.
     """
+    # A scene whose only detected object is "person" and that has no readable
+    # text is a talking-head shot — it carries nothing the explanation needs.
+    _NOISE = {"person", "tie", "chair"}
     lines = []
     for scene in scenes:
         ocr = (scene.get("ocr_text") or "").strip()
-        objects = ", ".join(o["label"] for o in scene.get("objects", [])[:5])
-        if not ocr and not objects:
+        labels = [o["label"] for o in scene.get("objects", [])[:5]]
+        informative = [l for l in labels if l not in _NOISE]
+        if not ocr and not informative:
             continue
+        objects = ", ".join(labels)
         parts = [f"[{_mmss(scene['start'])}]"]
         if objects:
             parts.append(f"shows: {objects}")
@@ -300,8 +305,9 @@ def _build_prompt(
         "Produce the JSON described by the schema. The 'explanation' array is the "
         "most important field: it must be a complete, self-contained teaching of "
         "the material. Anchor every section and chapter to a transcript timestamp "
-        "(start_sec). Populate 'scene_notes' for scenes that show a slide, diagram, "
-        "board, or code.",
+        "(start_sec) — use DISTINCT timestamps, not the same one repeated. "
+        "Populate 'scene_notes' ONLY for scenes that show a slide, diagram, board, "
+        "code editor, or document — skip plain talking-head or webcam shots.",
     ]
     if video_type is VideoType.CODING:
         header.append(
@@ -363,11 +369,17 @@ def generate(
 
     cache.set_state(video_id, "summarize", 0.2, f"Understanding the video ({client.model})...")
     started = time.perf_counter()
+    thinking = (
+        config.UNDERSTANDING_THINKING_BUDGET_CODING
+        if vtype is VideoType.CODING
+        else config.UNDERSTANDING_THINKING_BUDGET
+    )
     result = client.generate_json(
         persona, prompt,
         schema=_SCHEMA,
         temperature=config.UNDERSTANDING_TEMPERATURE,
         max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
+        thinking_budget=thinking,
     )
     elapsed = time.perf_counter() - started
     perf.record_observation(
