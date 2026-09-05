@@ -21,6 +21,18 @@ from ui.theme import CSS
 
 # Each profile trades wall-clock against accuracy. The planner (core/perf.py)
 # turns these into concrete model choices for the specific video.
+# Friendly labels for the video-type dropdown, mapped to core.understand.VideoType.
+VIDEO_TYPE_LABELS = {
+    "Lecture / tutorial": "lecture",
+    "Coding / algorithms": "coding",
+    "Meeting recording": "meeting",
+    "Interview / podcast": "interview",
+    "Conference talk": "talk",
+    "News segment": "news",
+    "Documentary / explainer": "documentary",
+    "Other": "other",
+}
+
 SPEED_PROFILES = {
     "Fast": {
         "budget": 150.0, "quality_floor": False,
@@ -70,6 +82,8 @@ _DEFAULTS = {
     "qa_history": {},     # video_id -> [{"question", "answer"}]
     "seek_to": 0,         # player start position, in seconds
     "profile": "Balanced",
+    "video_type": "Lecture / tutorial",
+    "topic": "",
     "pending_error": None,
 }
 for key, value in _DEFAULTS.items():
@@ -285,6 +299,7 @@ if meta is None or summary is None:
 
 scenes_data = pl.get_scenes(video_id)
 transcript = pl.get_transcript(video_id)
+understanding = pl.get_understanding(video_id)
 state = pl.get_state(video_id)
 source = _source_for(video_id)
 
@@ -340,36 +355,35 @@ with tabs[0]:
     if summary.get("warning"):
         st.info(summary["warning"].replace("_", " ").capitalize())
 
-    sections = [s for s in (summary.get("chunk_summaries") or []) if s.get("text")]
-    overall = summary.get("overall_summary") or ""
-
-    if sections:
-        # The walkthrough comes first and covers the whole video, section by
-        # section. The short "In summary" block sits at the end, the way a
-        # lecture recap does.
-        C.section(
-            "Detailed walkthrough",
-            f"{len(sections)} sections · each links to where it starts in the video",
-        )
-        for i, section in enumerate(sections, start=1):
-            st.markdown(
-                f'<div class="vs-walk">'
-                f'<div class="vs-walk-head">'
-                f'<span class="vs-walk-num">{i}</span>'
-                f'{C.timestamp_link(section["start"], source["source_ref"], source["is_upload"])}'
-                f'</div>'
-                f'<p class="vs-walk-text">{fmt.html.escape(section["text"])}</p>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        if overall:
-            st.write("")
-            C.section("In summary", "The key points, in brief")
-            st.markdown(f'<div class="vs-keypoints">{fmt.html.escape(overall)}</div>',
-                        unsafe_allow_html=True)
+    if understanding and understanding.get("explanation"):
+        C.understanding_view(understanding, source["source_ref"], source["is_upload"])
     else:
-        C.section("Summary")
-        st.write(overall or "_No summary was produced._")
+        sections = [s for s in (summary.get("chunk_summaries") or []) if s.get("text")]
+        overall = summary.get("overall_summary") or ""
+        if sections:
+            C.section(
+                "Detailed walkthrough",
+                f"{len(sections)} sections · each links to where it starts in the video",
+            )
+            for i, section in enumerate(sections, start=1):
+                st.markdown(
+                    f'<div class="vs-walk">'
+                    f'<div class="vs-walk-head">'
+                    f'<span class="vs-walk-num">{i}</span>'
+                    f'{C.timestamp_link(section["start"], source["source_ref"], source["is_upload"])}'
+                    f'</div>'
+                    f'<p class="vs-walk-text">{fmt.html.escape(section["text"])}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            if overall:
+                st.write("")
+                C.section("In summary", "The key points, in brief")
+                st.markdown(f'<div class="vs-keypoints">{fmt.html.escape(overall)}</div>',
+                            unsafe_allow_html=True)
+        else:
+            C.section("Summary")
+            st.write(overall or "_No summary was produced._")
 # --- Chapters ------------------------------------------------------------------
 with tabs[1]:
     chapters = summary.get("chapters") or []

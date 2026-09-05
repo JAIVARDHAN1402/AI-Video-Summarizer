@@ -23,7 +23,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Callable, Optional
 
 import config
-from core import cache, fuse, ingest, perf, qa, summarize, transcribe, vision, warm
+from core import cache, fuse, ingest, perf, qa, summarize, transcribe, understand, vision, warm
 from core.models import describe_exception
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,55 @@ ProgressCallback = Callable[[str, float, str], None]
 # Transcription dominates, so it drives most of the bar's movement.
 _ANALYZE_WEIGHTS = {"transcribe": 0.75, "vision": 0.25}
 
+
+def _understand_or_summarize(
+    video_id: str, force: bool, plan, video_type: str, topic: str,
+    progress_cb=None,
+) -> dict[str, Any]:
+    """Produce the explanation/summary: an LLM when one is configured, the
+    local BART/flan-t5 map-reduce otherwise.
+
+    Both write ``summary.json`` in a shape the UI and exports understand; the
+    LLM path additionally writes the richer ``understanding.json``. Falling
+    back on LLM failure keeps a transient API problem from failing the whole
+    run (unless config.UNDERSTANDING_FALLBACK_TO_LOCAL is off).
+    """
+    if understand.is_available():
+        try:
+            result = understand.generate(
+                video_id, video_type=video_type, topic=topic, force=force
+            )
+            summary = _understanding_to_summary(result)
+            cache.write_json(video_id, "summary", summary)
+            return summary
+        except understand.llm.LLMError as exc:
+            if not config.UNDERSTANDING_FALLBACK_TO_LOCAL:
+                raise
+            logger.warning(
+                "LLM understanding failed (%s); falling back to local summarizer",
+                understand.llm.LLMError.__name__, exc_info=True,
+            )
+    return summarize.summarize(video_id, force, plan)
+
+
+def _understanding_to_summary(u: dict[str, Any]) -> dict[str, Any]:
+    """Project understanding.json onto the legacy summary.json shape.
+
+    The explanation sections become the section-by-section walkthrough, the
+    recap becomes the overall summary, and chapters carry through. Everything
+    richer (glossary, coding, meeting, scene notes) stays only in
+    understanding.json, which the new UI reads directly.
+    """
+    return {
+        "overall_summary": u.get("summary") or u.get("overview", ""),
+        "chunk_summaries": [
+            {"start": s["start_sec"], "end": s["start_sec"], "text": s["body"]}
+            for s in u.get("explanation", [])
+        ],
+        "chapters": u.get("chapters", []),
+        "model": u.get("model", "llm"),
+        "understanding": True,
+    }
 
 def _set_torch_threads(n: int) -> None:
     """Resize torch's intra-op thread pool, if torch is loaded at all."""
@@ -103,6 +152,8 @@ def process(
     force: bool = False,
     progress_cb: Optional[ProgressCallback] = None,
     quality_floor: bool = False,
+    video_type: str = "lecture",
+    topic: str = "",
 ) -> dict[str, Any]:
     """Run the full M1 -> M6 pipeline for one video.
 
@@ -312,6 +363,11 @@ def get_meta(video_id: str) -> Optional[dict[str, Any]]:
 
 def get_summary(video_id: str) -> Optional[dict[str, Any]]:
     return cache.read_json(video_id, "summary")
+
+
+def get_understanding(video_id: str) -> Optional[dict[str, Any]]:
+    """The rich LLM output (explanation sections, glossary, coding, scene notes)."""
+    return cache.read_json(video_id, "understanding")
 
 
 def get_scenes(video_id: str) -> Optional[dict[str, Any]]:

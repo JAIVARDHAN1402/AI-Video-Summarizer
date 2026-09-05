@@ -30,3 +30,8 @@ Thumbs.db
 eval/results_rouge.json
 eval/results_keyframe_f1.json
 eval/results_qa_eval.json
+
+# Server runtime (Phase 3)
+server_data/
+server_state.db
+*.db-journal

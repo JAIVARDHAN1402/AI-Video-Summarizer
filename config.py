@@ -265,9 +265,20 @@ QA_MIN_REAL_WORDS = 4
 # truncate them anyway.
 QA_GENERATION_CHUNKS = 3
 QA_CONTEXT_MAX_TOKENS = 380
-USE_GEMINI = os.getenv("GEMINI_API_KEY") is not None
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.0-flash"
+USE_GEMINI = GEMINI_API_KEY is not None
+GEMINI_MODEL = "gemini-2.0-flash"  # Q&A generation backend (core/qa.py)
+
+# --- Understanding layer (core/understand.py) -----------------------------
+# When a provider key is set, the pipeline uses an LLM to produce a teachable
+# explanation instead of the BART/flan-t5 map-reduce. Gemini Flash: ~1M-token
+# context (the whole transcript fits, no lossy chunking), fast, cheap.
+UNDERSTANDING_MODEL = os.getenv("VS_UNDERSTANDING_MODEL", "gemini-2.0-flash")
+UNDERSTANDING_TEMPERATURE = float(os.getenv("VS_UNDERSTANDING_TEMPERATURE", "0.35"))
+UNDERSTANDING_MAX_OUTPUT_TOKENS = int(os.getenv("VS_UNDERSTANDING_MAX_TOKENS", "16384"))
+# Fall back to the local BART/flan-t5 summarizer if the LLM call fails, rather
+# than failing the whole run. Set False to surface LLM errors instead.
+UNDERSTANDING_FALLBACK_TO_LOCAL = True
 
 # --- UI / misc -------------------------------------------------------------
 TEAM_NAMES = os.getenv(

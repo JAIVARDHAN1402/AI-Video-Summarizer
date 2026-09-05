@@ -283,3 +283,151 @@ def empty_state(icon: str, title: str, body: str) -> None:
         f'</div>',
         unsafe_allow_html=True,
     )
+
+
+# --- Understanding (LLM output) ------------------------------------------------
+
+
+def understanding_view(u: dict, source_ref: str, is_upload: bool) -> None:
+    """Render the rich LLM output: explanation, glossary, code, scene notes.
+
+    Structured so a reader gets the concept from top to bottom — overview, then
+    the section-by-section teaching, then the recap, then the reference
+    material (glossary, per-type extras). Every section links back to the
+    moment in the video it came from.
+    """
+    if u.get("overview"):
+        section("Overview")
+        st.write(u["overview"])
+        st.write("")
+
+    explanation = u.get("explanation") or []
+    if explanation:
+        section(
+            "Explanation",
+            f"{len(explanation)} sections \u00b7 taught step by step, from the video and beyond it",
+        )
+        for i, block in enumerate(explanation, start=1):
+            added = not block.get("from_video", True)
+            badge = (
+                '<span class="vs-added-badge">added context</span>' if added else ""
+            )
+            st.markdown(
+                f'<div class="vs-explain">'
+                f'<div class="vs-explain-head">'
+                f'<span class="vs-walk-num">{i}</span>'
+                f'{timestamp_link(block["start_sec"], source_ref, is_upload)}'
+                f'<span class="vs-explain-heading">{fmt.html.escape(block["heading"])}</span>'
+                f'{badge}'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(block["body"])
+            st.write("")
+
+    if u.get("summary"):
+        section("In summary", "The whole thing, briefly")
+        st.markdown(
+            f'<div class="vs-keypoints">{fmt.html.escape(u["summary"])}</div>',
+            unsafe_allow_html=True,
+        )
+        st.write("")
+
+    if u.get("key_points"):
+        section("Key points")
+        st.markdown(
+            "".join(f"- {fmt.html.escape(p)}\n" for p in u["key_points"])
+        )
+        st.write("")
+
+    coding = u.get("coding") or {}
+    if coding.get("algorithm_name") or coding.get("implementations"):
+        _coding_block(coding)
+
+    meeting = u.get("meeting") or {}
+    if meeting.get("decisions") or meeting.get("action_items"):
+        _meeting_block(meeting)
+
+    if u.get("glossary"):
+        section("Glossary")
+        for g in u["glossary"]:
+            st.markdown(
+                f'<div class="vs-glossary">'
+                f'<span class="vs-glossary-term">{fmt.html.escape(g["term"])}</span>'
+                f'<span class="vs-glossary-def">{fmt.html.escape(g["definition"])}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        st.write("")
+
+    notes = u.get("scene_notes") or []
+    if notes:
+        section("On-screen material", "Slides, diagrams and boards, explained")
+        for note in notes:
+            cols = st.columns([1, 1.6], gap="medium")
+            with cols[0]:
+                path = Path(note["keyframe_path"]) if note.get("keyframe_path") else None
+                if path and path.exists():
+                    st.image(str(path), use_column_width=True)
+            with cols[1]:
+                st.markdown(
+                    timestamp_link(note["start"], source_ref, is_upload),
+                    unsafe_allow_html=True,
+                )
+                st.write(note["what_it_shows"])
+                if note.get("on_screen_text"):
+                    with st.expander("Text on screen"):
+                        st.caption(note["on_screen_text"])
+        st.write("")
+
+
+def _coding_block(coding: dict) -> None:
+    section("Algorithm & code", "Derived from the video, completed and corrected")
+    if coding.get("algorithm_name"):
+        st.markdown(f"**{fmt.html.escape(coding['algorithm_name'])}**")
+    if coding.get("intuition"):
+        st.write(coding["intuition"])
+    if coding.get("steps"):
+        st.markdown("".join(f"{i}. {fmt.html.escape(s)}\n" for i, s in enumerate(coding["steps"], 1)))
+    comp = []
+    if coding.get("time_complexity"):
+        comp.append(f"**Time:** {fmt.html.escape(coding['time_complexity'])}")
+    if coding.get("space_complexity"):
+        comp.append(f"**Space:** {fmt.html.escape(coding['space_complexity'])}")
+    if comp:
+        st.markdown(" \u00b7 ".join(comp))
+
+    impls = coding.get("implementations") or []
+    if impls:
+        st.write("")
+        lang_tabs = st.tabs([f"  {i['language']}  " for i in impls])
+        for tab, impl in zip(lang_tabs, impls):
+            with tab:
+                st.code(impl["code"], language=_code_lang(impl["language"]))
+    st.write("")
+
+
+_LANG_ALIASES = {
+    "c++": "cpp", "cpp": "cpp", "c#": "csharp", "js": "javascript",
+    "javascript": "javascript", "python": "python", "py": "python",
+    "java": "java", "go": "go", "golang": "go", "rust": "rust",
+    "typescript": "typescript", "ts": "typescript", "kotlin": "kotlin",
+}
+
+
+def _code_lang(name: str) -> str:
+    return _LANG_ALIASES.get(name.strip().lower(), name.strip().lower() or "text")
+
+
+def _meeting_block(meeting: dict) -> None:
+    if meeting.get("decisions"):
+        section("Decisions")
+        st.markdown("".join(f"- {fmt.html.escape(d)}\n" for d in meeting["decisions"]))
+        st.write("")
+    if meeting.get("action_items"):
+        section("Action items")
+        for a in meeting["action_items"]:
+            owner = f"**{fmt.html.escape(a['owner'])}** \u2014 " if a.get("owner") else ""
+            due = f"  _(due {fmt.html.escape(a['due'])})_" if a.get("due") else ""
+            st.markdown(f"- {owner}{fmt.html.escape(a['task'])}{due}")
+        st.write("")

@@ -86,6 +86,12 @@ def main() -> int:
         "--plan-only", action="store_true",
         help="Show the execution plan for the source and exit without processing",
     )
+    parser.add_argument(
+        "--type", default="lecture",
+        choices=["lecture", "coding", "meeting", "interview", "talk", "news", "documentary", "other"],
+        help="What kind of video it is — steers the explanation (default: lecture)",
+    )
+    parser.add_argument("--topic", default="", help="The subject, if known — sharpens extraction")
     parser.add_argument("--ask", help="Ask a question against a processed video")
     parser.add_argument("--json", action="store_true", help="Emit raw JSON instead of a report")
     args = parser.parse_args()
@@ -127,6 +133,7 @@ def main() -> int:
         result = pipeline.process(
             source_ref, is_upload=is_upload, force=args.force,
             progress_cb=_print_progress, quality_floor=profile["quality_floor"],
+            video_type=args.type, topic=args.topic,
         )
     except VideoSummarizerError as exc:
         print(f"\nPipeline failed: {exc}", file=sys.stderr)

@@ -411,6 +411,25 @@ a.vs-ts:hover { background: rgba(109,106,248,.26); border-color: rgba(109,106,24
     color: var(--text); font-size: .93rem; line-height: 1.7;
 }
 
+/* --- Explanation sections (LLM understanding) --------------------------- */
+.vs-explain { padding: .9rem 0 .2rem 0; }
+.vs-explain-head { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; margin-bottom: .1rem; }
+.vs-explain-heading { font-weight: 650; font-size: .98rem; color: var(--text); letter-spacing: -0.012em; }
+.vs-added-badge {
+    font-size: .62rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--cyan); background: rgba(34,211,238,.12);
+    border: 1px solid rgba(34,211,238,.28); border-radius: 999px; padding: .1rem .45rem;
+}
+
+/* --- Glossary --------------------------------------------------------------- */
+.vs-glossary {
+    display: flex; gap: .8rem; padding: .55rem .2rem;
+    border-bottom: 1px solid var(--border); font-size: .885rem; line-height: 1.6;
+}
+.vs-glossary:last-child { border-bottom: none; }
+.vs-glossary-term { font-weight: 650; color: var(--text); flex-shrink: 0; min-width: 150px; }
+.vs-glossary-def { color: var(--text-muted); }
+
 /* --- Transcript ----------------------------------------------------------- */
 .vs-transcript {
     max-height: 580px; overflow-y: auto; padding-right: .55rem;
