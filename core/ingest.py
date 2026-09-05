@@ -197,7 +197,9 @@ def _reject_if_too_long(duration_sec: float) -> None:
     if duration_sec and duration_sec > config.MAX_VIDEO_DURATION_SEC:
         raise VideoTooLongError(
             f"This video is {duration_sec / 60:.0f} minutes long, which is over "
-            f"the {config.MAX_VIDEO_DURATION_SEC / 60:.0f}-minute limit."
+            f"the {config.MAX_VIDEO_DURATION_SEC / 60:.0f}-minute limit. "
+            f"Raise it with VS_MAX_VIDEO_MIN={duration_sec / 60:.0f} if you want "
+            "to process it anyway."
         )
 
 
