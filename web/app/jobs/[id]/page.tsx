@@ -88,7 +88,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
         <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-accent to-violet transition-[width] duration-500"
+            className="h-full rounded-full bg-accent transition-[width] duration-500"
             style={{ width: `${Math.round((job?.progress ?? 0) * 100)}%` }}
           />
         </div>

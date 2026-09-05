@@ -44,7 +44,7 @@ export function UnderstandingView({
                     {b.heading}
                   </span>
                   {!b.from_video && (
-                    <span className="rounded-full border border-cyan/30 bg-cyan/[0.12] px-2 py-0.5 text-[0.62rem] font-bold uppercase tracking-wide text-cyan">
+                    <span className="rounded-full border border-cyan/25 bg-cyan/[0.08] px-2 py-0.5 text-[0.62rem] font-bold uppercase tracking-wide text-cyan">
                       added context
                     </span>
                   )}
@@ -59,7 +59,7 @@ export function UnderstandingView({
       {u.summary && (
         <section>
           <SectionHead title="In summary" hint="The whole thing, briefly" />
-          <div className="rounded border border-accent/25 bg-gradient-to-b from-accent/[0.14] to-transparent p-4 text-[0.93rem] leading-relaxed text-ink">
+          <div className="rounded border border-accent/20 bg-accent/[0.05] p-4 text-[0.93rem] leading-relaxed text-ink">
             {u.summary}
           </div>
         </section>

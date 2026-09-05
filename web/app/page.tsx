@@ -57,13 +57,14 @@ export default function Home() {
 
   return (
     <div>
-      <div className="mx-auto max-w-[620px] pb-8 pt-6 text-center">
-        <h1 className="bg-gradient-to-br from-white via-[#C3C2FD] to-[#9B8AF5] bg-clip-text text-[2.6rem] font-extrabold leading-[1.1] tracking-tight text-transparent">
+      <div className="mx-auto max-w-[640px] pb-9 pt-8 text-center">
+        <span className="pill pill-accent mb-4">AI video understanding</span>
+        <h1 className="text-[2.7rem] font-extrabold leading-[1.08] tracking-[-0.02em] text-ink">
           Understand any video
           <br />
-          without watching it
+          <span className="text-accent">without watching it</span>
         </h1>
-        <p className="mx-auto mt-3 max-w-[520px] text-[1rem] leading-relaxed text-ink-muted">
+        <p className="mx-auto mt-4 max-w-[540px] text-[1.02rem] leading-relaxed text-ink-muted">
           Paste a link. You get a teachable explanation, section by section, with the
           algorithm and code for programming videos — and an assistant that cites the
           moment it got each answer.
@@ -71,14 +72,14 @@ export default function Home() {
       </div>
 
       <form onSubmit={submit} className="card mx-auto max-w-[760px] p-6">
-        <div className="mb-3 flex w-fit gap-0.5 rounded border border-border bg-surface p-1">
+        <div className="mb-3 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
           {(["url", "upload"] as const).map((m) => (
             <button
               type="button"
               key={m}
               onClick={() => setMode(m)}
               className={`rounded-xs px-3.5 py-1.5 text-[0.82rem] font-semibold capitalize transition-colors ${
-                mode === m ? "bg-surface-active text-ink" : "text-ink-dim hover:text-ink"
+                mode === m ? "bg-surface text-ink shadow-card" : "text-ink-dim hover:text-ink"
               }`}
             >
               {m === "url" ? "Paste a link" : "Upload a file"}

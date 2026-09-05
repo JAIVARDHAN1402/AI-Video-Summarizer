@@ -4,53 +4,52 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   @apply bg-bg text-ink font-sans antialiased;
-  background-image:
-    radial-gradient(1100px 620px at 50% -10%, rgba(109, 106, 248, 0.1), transparent 62%),
-    radial-gradient(760px 460px at 92% 4%, rgba(168, 85, 247, 0.06), transparent 58%);
-  background-attachment: fixed;
+  /* one whisper-soft wash at the top so pure white doesn't feel flat */
+  background-image: radial-gradient(1200px 520px at 50% -18%, rgba(79, 70, 229, 0.05), transparent 70%);
+  background-repeat: no-repeat;
   min-height: 100vh;
+}
+
+::selection {
+  background: rgba(79, 70, 229, 0.16);
 }
 
 /* --- primitives ------------------------------------------------------------ */
 .card {
-  @apply rounded-lg border border-border bg-gradient-to-b from-surface-raised to-surface;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  @apply rounded-lg border border-border bg-surface shadow-card;
 }
 
 .btn {
   @apply inline-flex items-center justify-center gap-2 rounded-sm border border-border-strong
-    bg-gradient-to-b from-surface-hover to-surface-raised px-4 py-2.5 text-sm font-semibold
-    text-ink transition-all;
+    bg-surface px-4 py-2.5 text-sm font-semibold text-ink transition-colors;
 }
 .btn:hover {
-  @apply from-surface-active to-surface-hover -translate-y-px;
+  @apply bg-surface-hover;
 }
 .btn-primary {
-  @apply border-transparent bg-gradient-to-br from-accent to-violet text-white;
-  box-shadow: 0 2px 10px rgba(109, 106, 248, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  @apply border-transparent bg-accent text-white shadow-[0_1px_2px_rgba(79,70,229,0.30)];
 }
 .btn-primary:hover {
-  filter: brightness(1.06);
+  @apply bg-accent-bright;
 }
 .btn:disabled {
-  @apply opacity-50 pointer-events-none;
+  @apply opacity-45 pointer-events-none;
 }
 
 .input,
 .select {
-  @apply w-full rounded-sm border border-border-strong bg-bg-elevated px-3.5 py-2.5 text-[0.92rem]
+  @apply w-full rounded-sm border border-border-strong bg-surface px-3.5 py-2.5 text-[0.92rem]
     text-ink outline-none transition-colors placeholder:text-ink-dim;
 }
 .input:focus,
 .select:focus {
   @apply border-accent;
-  box-shadow: 0 0 0 3px rgba(109, 106, 248, 0.14);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
 }
 .label {
   @apply mb-1.5 block text-[0.8rem] font-medium text-ink-muted;
@@ -61,16 +60,16 @@ body {
     bg-surface-raised px-2.5 py-1 text-[0.715rem] font-semibold text-ink-muted;
 }
 .pill-accent {
-  @apply border-transparent bg-accent/[0.14] text-accent-bright;
+  @apply border-accent/20 bg-accent/[0.08] text-accent;
 }
 .pill-success {
-  @apply border-transparent bg-success/[0.13] text-success;
+  @apply border-success/20 bg-success/[0.10] text-success;
 }
 .pill-warning {
-  @apply border-transparent bg-warning/[0.13] text-warning;
+  @apply border-warning/25 bg-warning/[0.10] text-warning;
 }
 .pill-danger {
-  @apply border-transparent bg-danger/[0.13] text-danger;
+  @apply border-danger/20 bg-danger/[0.09] text-danger;
 }
 
 .section-head {
@@ -84,17 +83,18 @@ body {
 }
 
 .ts {
-  @apply inline-flex flex-shrink-0 items-center rounded-xs border border-transparent bg-accent/[0.14]
-    px-2 py-0.5 font-mono text-[0.765rem] font-semibold text-accent-bright no-underline
+  @apply inline-flex flex-shrink-0 items-center rounded-xs border border-transparent bg-accent/[0.08]
+    px-2 py-0.5 font-mono text-[0.765rem] font-semibold text-accent no-underline
     tabular-nums transition-colors;
 }
+button.ts:hover,
 a.ts:hover {
-  @apply bg-accent/[0.26] border-accent/40;
+  @apply bg-accent/[0.16];
 }
 
 /* prose tweaks for the explanation bodies */
 .prose-body {
-  @apply text-[0.925rem] leading-[1.72] text-ink;
+  @apply text-[0.925rem] leading-[1.75] text-ink;
 }
 .prose-body p {
   @apply my-2;
@@ -107,12 +107,16 @@ a.ts:hover {
 }
 
 ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-thumb {
   @apply rounded-full;
-  background: #202634;
+  background: #d4d5da;
   border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b9bbc2;
   background-clip: content-box;
 }

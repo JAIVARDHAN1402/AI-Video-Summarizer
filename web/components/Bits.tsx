@@ -77,22 +77,22 @@ export function CodeTabs({ impls }: { impls: { language: string; code: string }[
   if (!impls.length) return null;
   return (
     <div>
-      <div className="mb-2 flex w-fit gap-0.5 rounded border border-border bg-surface p-1">
+      <div className="mb-2 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
         {impls.map((im, i) => (
           <button
             key={im.language + i}
             onClick={() => setActive(i)}
             className={`rounded-xs px-3 py-1.5 text-[0.8rem] font-semibold transition-colors ${
               i === active
-                ? "bg-surface-active text-ink"
-                : "text-ink-dim hover:bg-surface-hover hover:text-ink"
+                ? "bg-surface text-ink shadow-card"
+                : "text-ink-dim hover:text-ink"
             }`}
           >
             {im.language}
           </button>
         ))}
       </div>
-      <pre className="max-h-[520px] overflow-auto rounded border border-border bg-bg-elevated p-4 font-mono text-[0.82rem] leading-relaxed text-ink">
+      <pre className="max-h-[520px] overflow-auto rounded border border-transparent bg-code-bg p-4 font-mono text-[0.82rem] leading-relaxed text-code-ink">
         <code>{impls[active].code}</code>
       </pre>
     </div>

@@ -76,7 +76,7 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
           ].map(([v, l]) => (
             <div
               key={l}
-              className="rounded border border-border bg-gradient-to-b from-surface-raised to-surface p-3.5"
+              className="rounded border border-border bg-surface-raised p-3.5 shadow-card"
             >
               <div className="text-[1.35rem] font-bold leading-tight tabular-nums text-ink">
                 {v}
@@ -89,15 +89,15 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
         </div>
       </div>
 
-      <div className="mt-6 mb-4 flex w-fit gap-0.5 overflow-x-auto rounded border border-border bg-surface p-1">
+      <div className="mt-6 mb-5 flex w-fit gap-0.5 overflow-x-auto rounded-sm border border-border bg-bg-elevated p-1">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`whitespace-nowrap rounded-xs px-3.5 py-2 text-[0.85rem] font-semibold transition-colors ${
               tab === t
-                ? "bg-surface-active text-ink"
-                : "text-ink-dim hover:bg-surface-hover hover:text-ink"
+                ? "bg-surface text-ink shadow-card"
+                : "text-ink-dim hover:text-ink"
             }`}
           >
             {t}
@@ -219,7 +219,7 @@ function ScenesView({
       {hasImportance && (
         <div className="flex items-center gap-2 text-[0.8rem]">
           <span className="text-ink-dim">Order</span>
-          <div className="flex gap-0.5 rounded border border-border bg-surface p-1">
+          <div className="flex gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
             {[
               ["Timeline", false],
               ["Importance", true],
@@ -228,7 +228,7 @@ function ScenesView({
                 key={label as string}
                 onClick={() => setByImportance(val as boolean)}
                 className={`rounded-xs px-2.5 py-1 font-semibold transition-colors ${
-                  byImportance === val ? "bg-surface-active text-ink" : "text-ink-dim hover:text-ink"
+                  byImportance === val ? "bg-surface text-ink shadow-card" : "text-ink-dim hover:text-ink"
                 }`}
               >
                 {label}
@@ -246,9 +246,9 @@ function ScenesView({
               <img src={s.keyframe_url} alt="" loading="lazy" className="aspect-video w-full object-cover" />
             )}
             {typeof s.importance === "number" && (
-              <div className="h-1 w-full bg-surface-raised">
+              <div className="h-1 w-full bg-surface-active">
                 <div
-                  className="h-full bg-gradient-to-r from-accent to-violet"
+                  className="h-full bg-accent"
                   style={{ width: `${Math.round(s.importance * 100)}%` }}
                   title={`importance ${(s.importance * 100).toFixed(0)}%`}
                 />
@@ -445,9 +445,9 @@ function ReportView({
                 <span className="capitalize text-ink">{k}</span>
                 <span className="font-mono tabular-nums text-ink-muted">{v.toFixed(1)}s</span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-surface-raised">
+              <div className="h-1.5 overflow-hidden rounded-full bg-surface-active">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-accent to-violet"
+                  className="h-full rounded-full bg-accent"
                   style={{ width: `${Math.min((v / longest) * 100, 100)}%` }}
                 />
               </div>
