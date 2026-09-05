@@ -179,8 +179,13 @@ def load_tvsum(tvsum_root: Path) -> list[VideoAnnotation]:
     if mat is not None:
         try:
             return _load_tvsum_mat(mat, video_dir)
+        except NotImplementedError:
+            # The v1_1 release ships a MATLAB v7.3 (HDF5) .mat that scipy
+            # cannot read. The .tsv files beside it carry the same
+            # annotations, so this is the normal path, not a failure.
+            logger.info("TVSum .mat is MATLAB v7.3; reading the .tsv annotations instead")
         except Exception:
-            logger.warning("TVSum .mat parse failed, trying .tsv", exc_info=True)
+            logger.warning("TVSum .mat parse failed, falling back to .tsv", exc_info=True)
     return _load_tvsum_tsv(tvsum_root, video_dir)
 
 
