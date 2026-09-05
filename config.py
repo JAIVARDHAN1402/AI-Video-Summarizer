@@ -284,6 +284,13 @@ UNDERSTANDING_MAX_OUTPUT_TOKENS = int(os.getenv("VS_UNDERSTANDING_MAX_TOKENS", "
 # on coding videos where the model benefits from reasoning through the code.
 UNDERSTANDING_THINKING_BUDGET = int(os.getenv("VS_UNDERSTANDING_THINKING", "0"))
 UNDERSTANDING_THINKING_BUDGET_CODING = int(os.getenv("VS_UNDERSTANDING_THINKING_CODING", "4096"))
+
+# Send the more informative keyframes to the (multimodal) model alongside
+# the text, so it can read diagrams, handwriting and layout that OCR misses.
+# Each image is ~260+ tokens; the cap keeps request size and cost bounded.
+UNDERSTANDING_SEND_SCENE_IMAGES = os.getenv("VS_UNDERSTANDING_IMAGES", "1") not in ("0", "false", "no")
+UNDERSTANDING_MAX_SCENE_IMAGES = int(os.getenv("VS_UNDERSTANDING_MAX_IMAGES", "12"))
+UNDERSTANDING_SCENE_IMAGE_WIDTH = 768
 # Fall back to the local BART/flan-t5 summarizer if the LLM call fails, rather
 # than failing the whole run. Set False to surface LLM errors instead.
 UNDERSTANDING_FALLBACK_TO_LOCAL = True

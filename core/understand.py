@@ -26,6 +26,8 @@ from enum import Enum
 from typing import Any, Optional
 
 import config
+from pathlib import Path
+
 from core import cache, llm, perf
 
 logger = logging.getLogger(__name__)
@@ -276,6 +278,55 @@ def _format_scenes(scenes: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _select_scene_images(
+    scenes: list[dict[str, Any]], limit: int
+) -> list[llm.ImageRef]:
+    """Pick the keyframes worth sending to a multimodal model and encode them.
+
+    Only scenes that show real material (readable text, or a non-talking-head
+    object set) are candidates; sending a webcam shot wastes ~260 tokens for
+    nothing. When there are more candidates than the cap, they are sampled
+    evenly across the runtime so coverage stays spread out. Each frame is
+    downscaled and JPEG-compressed to keep the request small.
+    """
+    try:
+        import cv2
+    except Exception:
+        logger.warning("opencv unavailable; sending no scene images", exc_info=True)
+        return []
+
+    noise = {"person", "tie", "chair"}
+    candidates = []
+    for sc in scenes:
+        path = sc.get("keyframe_path")
+        if not path or not Path(path).exists():
+            continue
+        ocr = (sc.get("ocr_text") or "").strip()
+        informative = [o["label"] for o in sc.get("objects", []) if o["label"] not in noise]
+        if ocr or informative:
+            candidates.append(sc)
+
+    if not candidates:
+        return []
+    if len(candidates) > limit:
+        step = len(candidates) / limit
+        candidates = [candidates[int(i * step)] for i in range(limit)]
+
+    images: list[llm.ImageRef] = []
+    for sc in candidates:
+        img = cv2.imread(str(sc["keyframe_path"]))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+        target_w = config.UNDERSTANDING_SCENE_IMAGE_WIDTH
+        if w > target_w:
+            img = cv2.resize(img, (target_w, int(h * target_w / w)), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        if ok:
+            images.append((f"scene at {_mmss(sc['start'])}", buf.tobytes()))
+    logger.info("attaching %d scene images to the understanding prompt", len(images))
+    return images
+
 def _build_prompt(
     meta: dict[str, Any], transcript: dict[str, Any], scenes_data: Optional[dict[str, Any]],
     video_type: VideoType, topic: str,
@@ -307,7 +358,10 @@ def _build_prompt(
         "the material. Anchor every section and chapter to a transcript timestamp "
         "(start_sec) — use DISTINCT timestamps, not the same one repeated. "
         "Populate 'scene_notes' ONLY for scenes that show a slide, diagram, board, "
-        "code editor, or document — skip plain talking-head or webcam shots.",
+        "code editor, or document — skip plain talking-head or webcam shots. "
+        "Keyframe images for the more informative scenes are attached below; use "
+        "them to read diagrams, handwriting, and layout that the OCR text misses, "
+        "and to make the scene_notes and explanation more precise.",
     ]
     if video_type is VideoType.CODING:
         header.append(
@@ -366,6 +420,14 @@ def generate(
     client = llm.get_client()
     persona = _PERSONA_BY_TYPE[vtype]
     prompt = _build_prompt(meta, transcript, scenes_data, vtype, topic)
+    images = (
+        _select_scene_images(
+            (scenes_data or {}).get("scenes") or [],
+            config.UNDERSTANDING_MAX_SCENE_IMAGES,
+        )
+        if config.UNDERSTANDING_SEND_SCENE_IMAGES
+        else []
+    )
 
     cache.set_state(video_id, "summarize", 0.2, f"Understanding the video ({client.model})...")
     started = time.perf_counter()
@@ -380,6 +442,7 @@ def generate(
         temperature=config.UNDERSTANDING_TEMPERATURE,
         max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
         thinking_budget=thinking,
+        images=images,
     )
     elapsed = time.perf_counter() - started
     perf.record_observation(

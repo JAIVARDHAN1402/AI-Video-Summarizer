@@ -15,9 +15,11 @@ nothing above this file knows which provider answered.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -33,6 +35,9 @@ _GEMINI_ENDPOINT = (
 # the prompt, and a lecture transcript is nowhere near that. Cap the assembled
 # context well below the ceiling; callers trim to fit and note when they did.
 MAX_CONTEXT_CHARS = 600_000
+
+# (caption, jpeg_bytes) pair for a keyframe sent to a multimodal model.
+ImageRef = tuple[str, bytes]
 
 
 class LLMError(RuntimeError):
@@ -77,6 +82,7 @@ class LLMClient:
         temperature: float = 0.4,
         max_output_tokens: int = 8192,
         thinking_budget: int = 0,
+        images: Optional[list["ImageRef"]] = None,
         retries: int = 3,
     ) -> LLMResult:
         """Return the model's reply parsed as JSON.
@@ -85,6 +91,10 @@ class LLMClient:
             system_instruction: The persona / task framing. Kept separate from
                 the user prompt so the model weights it as instruction, not data.
             prompt: The material to work from (transcript, scene list, ...).
+            images: Keyframes to send alongside the text, as (caption, jpeg_bytes)
+                pairs. The model reads slides, diagrams, handwriting and code
+                that OCR alone misses. Each is ~260+ tokens, so callers cap
+                the count.
             schema: An optional JSON Schema the reply must conform to. Gemini
                 enforces this server-side, which removes almost all of the
                 "model returned prose around the JSON" failure mode.
@@ -122,9 +132,19 @@ class LLMClient:
         if schema is not None:
             generation_config["responseSchema"] = schema
 
+        user_parts: list[dict[str, Any]] = [{"text": prompt}]
+        for caption, jpeg in images or []:
+            user_parts.append({"text": f"\n[Image — {caption}]"})
+            user_parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(jpeg).decode("ascii"),
+                }
+            })
+
         body = {
             "systemInstruction": {"parts": [{"text": system_instruction}]},
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "contents": [{"role": "user", "parts": user_parts}],
             "generationConfig": generation_config,
             # Loosen the default safety filters: lecture and meeting audio
             # legitimately discusses topics (security exploits, medical detail,
