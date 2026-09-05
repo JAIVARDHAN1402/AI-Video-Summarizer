@@ -559,6 +559,27 @@ def _dedup_scenes(
 # --- Orchestration -----------------------------------------------------------------
 
 
+def _attach_scene_importance(result: dict[str, Any], cache_dir: Path) -> None:
+    """Fold in the learned M7 importance scores, if a checkpoint is configured.
+
+    Best-effort and lazily imported: no torch/ml import cost and no behaviour
+    change when ``config.HIGHLIGHT_MODEL_PATH`` is unset or the file is gone.
+    """
+    ckpt = getattr(config, "HIGHLIGHT_MODEL_PATH", None)
+    if not ckpt:
+        return
+    try:
+        from ml import infer as ml_infer
+
+        ml_infer.attach_importance(result, cache_dir, ckpt)
+        ranked = result.get("importance_ranked")
+        if ranked:
+            logger.info("attached M7 importance to %d scenes (top scene id %s)",
+                        len(result.get("scenes", [])), ranked[0])
+    except Exception:
+        logger.warning("scene-importance scoring skipped", exc_info=True)
+
+
 def analyze_visual(
     video_id: str, force: bool = False, plan: Optional[perf.ExecutionPlan] = None
 ) -> dict[str, Any]:
@@ -686,6 +707,7 @@ def analyze_visual(
         "raw_scene_count": raw_scene_count,
         "ocr_frames_read": sum(1 for t in ocr_texts if t),
     }
+    _attach_scene_importance(result, cache_dir)
     cache.write_json(video_id, "scenes", result)
     cache.set_state(video_id, "vision", 1.0, "Visual analysis complete.")
     return result

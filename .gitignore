@@ -35,3 +35,8 @@ eval/results_qa_eval.json
 server_data/
 server_state.db
 *.db-journal
+
+# ML: highlight-model training (Phase 4)
+data/highlight/
+ml/prepared/
+ml/checkpoints/

@@ -133,6 +133,21 @@ YOLO_BATCH_SIZE = 32
 CLIP_MODEL = "ViT-B-32"
 CLIP_PRETRAINED = "laion2b_s34b_b79k"
 CLIP_BATCH_SIZE = 32
+
+# --- M7: learned scene-importance / highlight model (ml/) --------------------
+# Trained offline on SumMe + TVSum. When a checkpoint is present, the vision
+# stage attaches an ``importance`` score (0-1) to every scene and an
+# ``importance_ranked`` scene order to scenes.json; the LLM/summarizer then
+# prefer high-importance scenes. Absent a checkpoint the pipeline is unchanged.
+# VS_HIGHLIGHT_MODEL overrides the path; "off" / "0" disables it outright.
+_highlight_env = os.getenv("VS_HIGHLIGHT_MODEL", "").strip()
+if _highlight_env.lower() in {"off", "0", "false", "no"}:
+    HIGHLIGHT_MODEL_PATH = None
+elif _highlight_env:
+    HIGHLIGHT_MODEL_PATH = _highlight_env
+else:
+    _default_ckpt = PROJECT_ROOT / "ml" / "checkpoints" / "importance.pt"
+    HIGHLIGHT_MODEL_PATH = str(_default_ckpt) if _default_ckpt.exists() else None
 # Hard cap on keyframes. Every per-scene cost downstream (YOLO, CLIP, OCR,
 # the chapter grid, the Scenes gallery) scales with this number, so capping it
 # is what makes a 90-minute video cost the same in the vision stage as a
