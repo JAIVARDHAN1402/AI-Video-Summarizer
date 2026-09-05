@@ -51,13 +51,13 @@ _cache_override = os.getenv("VS_CACHE_DIR")
 CACHE_ROOT = Path(_cache_override) if _cache_override else PROJECT_ROOT / "cache"
 
 # --- Ingestion -------------------------------------------------------------
-# Hard ceiling on input length. The adaptive planner already downshifts models
-# to hold the time budget on long videos, so this is a guard against the
-# pathological cases (multi-hour livestreams) rather than a capability limit —
-# raise it with VS_MAX_VIDEO_MIN if you have the disk and the patience. Note a
-# very long video plus the "accurate" profile pins the largest models and will
-# take hours on CPU; leave such runs on "balanced".
-MAX_VIDEO_DURATION_SEC = float(os.getenv("VS_MAX_VIDEO_MIN", "180")) * 60
+# Hard ceiling on input length. The adaptive planner downshifts models to hold
+# the time budget, so length is a resource question rather than a capability
+# one: a 15-hour source means roughly 10 GB of video, a 1.7 GB wav, and an
+# hour-plus of CPU transcription, and its transcript has to be summarised into
+# the same UNDERSTANDING_MAX_OUTPUT_TOKENS as a 10-minute one. Tune with
+# VS_MAX_VIDEO_MIN.
+MAX_VIDEO_DURATION_SEC = float(os.getenv("VS_MAX_VIDEO_MIN", "900")) * 60
 AUDIO_SAMPLE_RATE = 16000  # Whisper requirement
 AUDIO_CHANNELS = 1
 INGEST_MAX_RETRIES = 2
