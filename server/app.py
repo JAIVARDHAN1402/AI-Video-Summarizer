@@ -55,7 +55,10 @@ def _startup() -> None:
         warm.start()
     except Exception:
         logger.warning("model warm-up could not start", exc_info=True)
-    logger.info("API ready — queue backend: %s", config.QUEUE_BACKEND)
+    if config.QUEUE_BACKEND == "redis":
+        logger.info("API ready — queue backend: redis (%s); workers run separately", config.REDIS_URL)
+    else:
+        logger.info("API ready — %s", jobs.fleet_status())
 
 
 # --- Jobs -------------------------------------------------------------------
@@ -69,8 +72,9 @@ def create_job(req: schemas.CreateJobRequest) -> schemas.JobRef:
     job = jobs.create_job(
         source_ref=url, is_upload=False, video_type=req.video_type,
         topic=req.topic.strip(), profile=req.profile, force=req.force,
+        sla_sec=req.sla_sec,
     )
-    jobs.enqueue(job.id)
+    jobs.enqueue(job.id, job.routed_worker_class)
     return schemas.JobRef(id=job.id, status=job.status.value)
 
 
@@ -206,7 +210,7 @@ def scheduler_preview(req: schemas.CreateJobRequest) -> dict:
         duration = float(ingest.probe_remote(req.url).get("duration_sec") or 900.0)
     except Exception:
         duration = 900.0
-    sla = jobs._PROFILE_BUDGET.get(req.profile) or config.DEFAULT_BUDGET_SEC
+    sla = req.sla_sec or jobs._PROFILE_BUDGET.get(req.profile) or config.DEFAULT_BUDGET_SEC
     return scheduler.route(duration, req.video_type, sla).to_dict()
 
 
@@ -217,6 +221,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "queue": config.QUEUE_BACKEND,
+        "fleet": jobs.fleet_status(),
         "llm_understanding": understand.is_available(),
         "hardware": perf.get_profile().__dict__ if hasattr(perf.get_profile(), "__dict__") else {},
     }

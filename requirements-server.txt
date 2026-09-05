@@ -6,7 +6,8 @@ python-multipart==0.0.20
 sse-starlette==2.1.3
 httpx==0.28.1
 
-# Optional: distributed queue (VS_QUEUE_BACKEND=redis). Lets workers run as
-# separate processes / machines — the substrate for the cross-hardware scheduler.
-# rq==2.0.0
-# redis==5.2.1
+# Distributed queue (VS_QUEUE_BACKEND=redis). Lets workers run as separate
+# processes / machines — the substrate for the cross-hardware SLA scheduler.
+# Not imported unless that backend is selected, so it is harmless to install.
+rq==2.0.0
+redis==5.2.1

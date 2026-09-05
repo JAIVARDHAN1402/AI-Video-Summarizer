@@ -46,6 +46,7 @@ _ROUTING_KEY = "total:per_min"
 _GPU_SEED_FACTOR = 0.18
 
 
+
 @dataclass
 class WorkerClass:
     name: str
@@ -64,6 +65,7 @@ class ClassPrediction:
     predicted_sec: float
     meets_sla: bool
     from_measurement: bool           # True once the class has real data
+    samples: int = 0                 # completed jobs feeding this class's model
     plan: dict[str, Any] = field(default_factory=dict)
 
 
@@ -113,13 +115,20 @@ def _registry() -> dict[str, WorkerClass]:
         except Exception:
             logger.warning("VS_WORKER_CLASSES is not valid JSON; ignoring", exc_info=True)
 
-    # Always include the class this process would run as, so a single-box
-    # deployment schedules against itself with zero configuration.
-    from core import perf
+    # A local in-process fleet is the authoritative class list when set — those
+    # are the only classes a worker actually runs as.
+    for m in config.LOCAL_FLEET:
+        name = m["class"]
+        classes.setdefault(name, WorkerClass(name=name, has_gpu="gpu" in name))
 
-    p = perf.get_profile()
-    local = config.WORKER_CLASS or f"{'gpu' if p.has_cuda else 'cpu'}-{p.cpu_count}core"
-    classes.setdefault(local, WorkerClass(name=local, has_gpu=p.has_cuda))
+    # Otherwise include the class this process would run as, so a single-box
+    # deployment schedules against itself with zero configuration.
+    if not config.LOCAL_FLEET:
+        from core import perf
+
+        p = perf.get_profile()
+        local = config.WORKER_CLASS or f"{'gpu' if p.has_cuda else 'cpu'}-{p.cpu_count}core"
+        classes.setdefault(local, WorkerClass(name=local, has_gpu=p.has_cuda))
 
     # Any class that has completed a job but was never declared.
     with session() as db:
@@ -175,10 +184,11 @@ def route(
     for wc in classes.values():
         measured = _class_cost(wc.name)
         if measured is not None:
-            per_min, _samples = measured
+            per_min, samples = measured
             from_measurement = True
         else:
             per_min = wc.default_seed(cpu_ref)
+            samples = 0
             from_measurement = False
         predicted = per_min * duration_min
         predictions.append(ClassPrediction(
@@ -186,13 +196,22 @@ def route(
             predicted_sec=predicted,
             meets_sla=predicted <= sla_target_sec,
             from_measurement=from_measurement,
+            samples=samples,
         ))
 
-    # Prefer a class that meets the SLA; among those, the cheapest (fastest);
-    # if none meets it, take the fastest overall.
+    # Explore first: a class with no measurements has only a rough seed
+    # estimate, too crude to route on or to rule out. Probe the least-costly
+    # unmeasured class once; its real timing then feeds the model. After that,
+    # exploit: the cheapest class predicted to meet the SLA, or — if none does
+    # — the fastest overall.
+    unsampled = [p for p in predictions if p.samples == 0]
     within = [p for p in predictions if p.meets_sla]
-    pool = within or predictions
-    chosen = min(pool, key=lambda p: p.predicted_sec)
+    if unsampled:
+        chosen = min(unsampled, key=lambda p: (p.predicted_sec, p.worker_class))
+    elif within:
+        chosen = min(within, key=lambda p: (p.predicted_sec, p.worker_class))
+    else:
+        chosen = min(predictions, key=lambda p: (p.predicted_sec, p.worker_class))
 
     # Attach the concrete execution plan the worker should use, computed with
     # that class's cost model so the model choices match its real speed.

@@ -47,6 +47,12 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+def _aware(value: dt.datetime) -> dt.datetime:
+    """SQLite round-trips ``DateTime(timezone=True)`` as naive UTC — put the
+    tzinfo back so arithmetic against :func:`_now` doesn't raise."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=dt.timezone.utc)
+
+
 class Job(Base):
     """One video-processing request and everything known about its progress."""
 
@@ -91,7 +97,7 @@ class Job(Base):
         if self.started_at is None:
             return None
         end = self.finished_at or _now()
-        return round((end - self.started_at).total_seconds(), 1)
+        return round((_aware(end) - _aware(self.started_at)).total_seconds(), 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {

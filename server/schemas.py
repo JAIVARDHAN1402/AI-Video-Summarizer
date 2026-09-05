@@ -22,6 +22,11 @@ class CreateJobRequest(BaseModel):
     topic: str = ""
     profile: Profile = "balanced"
     force: bool = False
+    sla_sec: Optional[float] = Field(
+        None, gt=0,
+        description="Wall-clock target in seconds. Overrides the profile's "
+                    "default budget for routing and SLA scoring.",
+    )
 
 
 class JobRef(BaseModel):

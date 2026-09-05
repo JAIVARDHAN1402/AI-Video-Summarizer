@@ -1,0 +1,75 @@
+# Two-class worker fleet for the SLA-constrained scheduler.
+#
+#   docker compose up --build
+#   API       -> http://localhost:8000  (http://localhost:8000/docs)
+#   evidence  -> curl http://localhost:8000/api/scheduler/sla
+#             -> python scripts/fleet_demo.py --api http://localhost:8000
+#
+# worker-fast and worker-slow share one Redis queue but advertise different
+# hardware classes. The `cpus:` limits make worker-slow genuinely CPU-starved,
+# so per-class cost calibration and routing are measured on real wall-clock —
+# no emulation needed here (VS_WORKER_SPEED stays 1.0). Set GEMINI_API_KEY in a
+# .env file next to this one for the LLM understanding layer.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    command: python -m server.main
+    ports: ["8000:8000"]
+    environment: &worker_env
+      VS_QUEUE_BACKEND: redis
+      VS_REDIS_URL: redis://redis:6379/0
+      VS_DATABASE_URL: sqlite:////data/server_state.db
+      VS_CACHE_DIR: /data/cache
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - fleet-data:/data
+      - hf-models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-fast:
+    build: .
+    command: python -m server.worker
+    environment:
+      <<: *worker_env
+      VS_WORKER_CLASS: cpu-fast
+      VS_WORKER_SPEED: "1.0"
+    cpus: 2.0
+    mem_limit: 4g
+    volumes:
+      - fleet-data:/data
+      - hf-models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-slow:
+    build: .
+    command: python -m server.worker
+    environment:
+      <<: *worker_env
+      VS_WORKER_CLASS: cpu-slow
+      VS_WORKER_SPEED: "1.0"
+    cpus: 0.5
+    mem_limit: 3g
+    volumes:
+      - fleet-data:/data
+      - hf-models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  fleet-data:
+  hf-models:
