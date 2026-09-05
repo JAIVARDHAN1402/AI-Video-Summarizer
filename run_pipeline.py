@@ -23,7 +23,7 @@ from core.models import VideoSummarizerError
 PROFILES = {
     "fast": {"budget": 150.0, "quality_floor": False},
     "balanced": {"budget": None, "quality_floor": False},
-    "accurate": {"budget": None, "quality_floor": True},
+    "accurate": {"budget": config.ACCURATE_PROFILE_BUDGET_SEC, "quality_floor": False},
 }
 
 

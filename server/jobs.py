@@ -22,8 +22,23 @@ from server import scheduler, storage
 
 logger = logging.getLogger("server.jobs")
 
-_PROFILE_BUDGET = {"fast": 150.0, "balanced": None, "accurate": None}
-_PROFILE_QUALITY_FLOOR = {"fast": False, "balanced": False, "accurate": True}
+def _profile_budgets() -> dict[str, Optional[float]]:
+    """Wall-clock budget per profile. "accurate" gets a large but real budget
+    rather than none, so the planner still refuses configurations that can't
+    finish — see config.ACCURATE_PROFILE_BUDGET_SEC."""
+    import config as core_config
+
+    return {
+        "fast": 150.0,
+        "balanced": None,
+        "accurate": core_config.ACCURATE_PROFILE_BUDGET_SEC,
+    }
+
+
+_PROFILE_BUDGET = _profile_budgets()
+# quality_floor pins every ladder to its top rung and disables sampling; it is
+# unbounded by design and now used only as the scheduler's static baseline.
+_PROFILE_QUALITY_FLOOR = {"fast": False, "balanced": False, "accurate": False}
 
 # Progress writes are cheap (one row) but still rate-limited so a chatty stage
 # doesn't hammer the database; terminal transitions always write through.

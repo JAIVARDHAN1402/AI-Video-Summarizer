@@ -336,6 +336,17 @@ PROJECT_TITLE = os.getenv("PROJECT_TITLE", "AI-Based Video Summarization System"
 
 TARGET_PIPELINE_SEC = float(os.getenv("VS_TARGET_SEC", "300"))  # 5 minutes
 
+# The "accurate" profile's budget. It used to pin every ladder to its top rung
+# with no budget at all (quality_floor), which on a CPU box turned a two-hour
+# video into an all-day run — frame-accurate scene detection alone decodes
+# nearly every frame. Giving it a large but real budget keeps the intent ("take
+# longer, use better models") while letting the planner refuse the choices that
+# cannot finish: on a short video it still lands on the top rung, on a very
+# long one it degrades instead of grinding.
+ACCURATE_PROFILE_BUDGET_SEC = float(
+    os.getenv("VS_ACCURATE_SEC", str(TARGET_PIPELINE_SEC * 4))
+)
+
 # How the budget is divided along the critical path. transcribe and vision run
 # concurrently, so they share the single "analyze" slice. Must sum to <= 1.0;
 # the slack absorbs model loading and process startup.

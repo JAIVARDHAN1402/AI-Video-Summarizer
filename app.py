@@ -43,8 +43,12 @@ SPEED_PROFILES = {
         "help": f"Targets {config.TARGET_PIPELINE_SEC / 60:.0f} minutes for any video length.",
     },
     "Accurate": {
-        "budget": None, "quality_floor": True,
-        "help": "Largest models, full analysis. No time limit — can take much longer.",
+        "budget": config.ACCURATE_PROFILE_BUDGET_SEC, "quality_floor": False,
+        "help": (
+            f"Best models that fit ~{config.ACCURATE_PROFILE_BUDGET_SEC / 60:.0f} minutes. "
+            "Short videos get the largest models; long ones still step down rather "
+            "than running for hours."
+        ),
     },
 }
 
