@@ -37,6 +37,11 @@ class JobStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
 
 
 def _uuid() -> str:

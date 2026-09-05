@@ -117,6 +117,20 @@ def job_status(job_id: str) -> schemas.JobView:
     return schemas.JobView(**job.to_dict())
 
 
+@app.post("/api/jobs/{job_id}/cancel", response_model=schemas.JobView)
+def cancel_job(job_id: str) -> schemas.JobView:
+    """Stop a queued or running job.
+
+    A worker mid-stage notices at its next progress tick, so a long stage
+    finishes before the run unwinds; the row goes to "cancelled" immediately
+    either way, which is what clears a job wedged by a dead worker.
+    """
+    job = jobs.cancel_job(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return schemas.JobView(**job.to_dict())
+
+
 @app.get("/api/jobs/{job_id}/events")
 async def job_events(job_id: str) -> EventSourceResponse:
     """Stream job progress as SSE until the job reaches a terminal state.
@@ -138,7 +152,7 @@ async def job_events(job_id: str) -> EventSourceResponse:
             if snapshot != last:
                 last = snapshot
                 yield {"event": "progress", "data": json.dumps(payload)}
-            if job.status in (JobStatus.DONE, JobStatus.FAILED):
+            if job.status.is_terminal:
                 yield {"event": "end", "data": json.dumps(payload)}
                 break
             await asyncio.sleep(1.0)

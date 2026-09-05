@@ -7,7 +7,7 @@ export type Profile = "fast" | "balanced" | "accurate";
 
 export interface JobView {
   id: string;
-  status: "queued" | "running" | "done" | "failed";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
   stage: string;
   progress: number;
   message: string;
@@ -108,6 +108,9 @@ export const api = {
   },
 
   job: (id: string) => fetch(`/api/jobs/${id}`).then((r) => j<JobView>(r)),
+
+  cancelJob: (id: string) =>
+    fetch(`/api/jobs/${id}/cancel`, { method: "POST" }).then((r) => j<JobView>(r)),
 
   recentJobs: (limit = 30) =>
     fetch(`/api/jobs?limit=${limit}`).then((r) => j<JobView[]>(r)),

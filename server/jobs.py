@@ -110,9 +110,38 @@ def _preview_duration(source_ref: str, is_upload: bool = False) -> float:
         return 900.0
 
 
+class JobCancelled(Exception):
+    """Raised out of the progress callback to unwind a cancelled run."""
+
+
 def get_job(job_id: str) -> Optional[Job]:
     with session() as db:
         return db.get(Job, job_id)
+
+
+def cancel_job(job_id: str) -> Optional[Job]:
+    """Stop a queued or running job.
+
+    Flips the row to CANCELLED, which is what the UI reads and what a running
+    worker checks on its next progress tick. A job wedged by a killed worker
+    has no one left to notice, and flipping the row is exactly what clears it
+    from the queue view. Terminal jobs are returned unchanged.
+    """
+    with session() as db:
+        row = db.get(Job, job_id)
+        if row is None:
+            return None
+        if row.status.is_terminal:
+            return row
+        was = row.status
+        row.status = JobStatus.CANCELLED
+        row.stage = "cancelled"
+        row.message = "Stopped."
+        row.finished_at = dt.datetime.now(dt.timezone.utc)
+        db.commit()
+        db.refresh(row)
+        logger.info("job %s cancelled (was %s)", job_id, was.value)
+        return row
 
 
 def list_jobs(limit: int = 50) -> list[Job]:
@@ -144,6 +173,9 @@ def run_job(
         if job is None:
             logger.warning("run_job: %s not found", job_id)
             return
+        if job.status == JobStatus.CANCELLED:
+            logger.info("run_job: %s was cancelled before it started", job_id)
+            return
         job.status = JobStatus.RUNNING
         job.stage = "starting"
         job.started_at = dt.datetime.now(dt.timezone.utc)
@@ -167,6 +199,11 @@ def run_job(
             row = db.get(Job, job_id)
             if row is None:
                 return
+            # The cancel endpoint only flips the row; this is where a worker
+            # notices. Stages are coarse, so a cancel lands at the next stage
+            # boundary rather than instantly.
+            if row.status == JobStatus.CANCELLED:
+                raise JobCancelled(job_id)
             row.stage = stage
             row.progress = min(max(progress, 0.0), 1.0)
             row.message = message
@@ -189,6 +226,16 @@ def run_job(
                 quality_floor=_PROFILE_QUALITY_FLOOR.get(profile, False),
                 video_type=video_type, topic=topic,
             )
+    except JobCancelled:
+        logger.info("job %s cancelled mid-run", job_id)
+        with session() as db:
+            row = db.get(Job, job_id)
+            if row is not None:
+                row.stage = "cancelled"
+                row.message = "Stopped."
+                row.finished_at = dt.datetime.now(dt.timezone.utc)
+                db.commit()
+        return
     except Exception as exc:  # noqa: BLE001 - recorded on the row, re-raised for the worker log
         from core.models import describe_exception
 
