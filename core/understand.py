@@ -285,8 +285,9 @@ def _select_scene_images(
 
     Only scenes that show real material (readable text, or a non-talking-head
     object set) are candidates; sending a webcam shot wastes ~260 tokens for
-    nothing. When there are more candidates than the cap, they are sampled
-    evenly across the runtime so coverage stays spread out. Each frame is
+    nothing. When there are more candidates than the cap: if the M7 importance
+    model has scored the scenes, keep the highest-importance ones (then restore
+    time order); otherwise sample evenly across the runtime. Each frame is
     downscaled and JPEG-compressed to keep the request small.
     """
     try:
@@ -309,8 +310,14 @@ def _select_scene_images(
     if not candidates:
         return []
     if len(candidates) > limit:
-        step = len(candidates) / limit
-        candidates = [candidates[int(i * step)] for i in range(limit)]
+        if any("importance" in sc for sc in candidates):
+            candidates = sorted(
+                candidates, key=lambda sc: sc.get("importance", 0.0), reverse=True
+            )[:limit]
+            candidates.sort(key=lambda sc: sc.get("start", 0.0))
+        else:
+            step = len(candidates) / limit
+            candidates = [candidates[int(i * step)] for i in range(limit)]
 
     images: list[llm.ImageRef] = []
     for sc in candidates:

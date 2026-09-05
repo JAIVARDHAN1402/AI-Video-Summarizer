@@ -267,6 +267,19 @@ def process(
     )
     run_stage("index", "Building Q&A index", qa.build_index, video_id, force)
 
+    # Optional M7 highlight reel. Best-effort: a missing checkpoint or ffmpeg
+    # hiccup must not fail an otherwise-complete run.
+    highlight_path: Optional[str] = None
+    if config.HIGHLIGHT_AUTO_BUILD and getattr(config, "HIGHLIGHT_MODEL_PATH", None):
+        try:
+            from core import highlight as _highlight
+
+            report("highlight", cumulative, "Building highlight reel...")
+            hp = _highlight.build_highlight(video_id, force=force)
+            highlight_path = str(hp) if hp else None
+        except Exception:
+            logger.warning("highlight reel step failed for %s", video_id, exc_info=True)
+
     elapsed = round(time.perf_counter() - pipeline_started, 2)
     timings["total"] = elapsed
     cache.write_state(
@@ -287,6 +300,7 @@ def process(
         "summary": summary,
         "timings": timings,
         "elapsed_sec": elapsed,
+        "highlight_path": highlight_path,
     }
 
 
@@ -376,6 +390,16 @@ def get_scenes(video_id: str) -> Optional[dict[str, Any]]:
 
 def get_transcript(video_id: str) -> Optional[dict[str, Any]]:
     return cache.read_json(video_id, "transcript")
+
+
+def get_highlight(video_id: str, *, build: bool = False) -> Optional[str]:
+    """Path to the highlight reel, optionally building it on demand."""
+    from core import highlight as _highlight
+
+    p = _highlight.get_highlight_path(video_id)
+    if p is None and build:
+        p = _highlight.build_highlight(video_id)
+    return str(p) if p else None
 
 
 def get_hardware_profile() -> dict[str, Any]:

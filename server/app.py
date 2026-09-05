@@ -190,14 +190,24 @@ def video_result(video_id: str) -> schemas.VideoResult:
     meta = pipeline.get_meta(video_id)
     if meta is None:
         raise HTTPException(404, "video not found")
+    scenes = _keyframe_urls(video_id, pipeline.get_scenes(video_id))
+    highlight = None
+    hl = (scenes or {}).get("highlight") if scenes else None
+    if hl and Path(hl.get("path", "")).exists():
+        highlight = {
+            "url": f"/api/videos/{video_id}/highlight",
+            "seconds": hl.get("seconds"),
+            "scene_ids": hl.get("scene_ids", []),
+        }
     return schemas.VideoResult(
         video_id=video_id,
         meta=meta,
         understanding=_keyframe_urls(video_id, pipeline.get_understanding(video_id)),
         summary=pipeline.get_summary(video_id),
-        scenes=_keyframe_urls(video_id, pipeline.get_scenes(video_id)),
+        scenes=scenes,
         transcript=pipeline.get_transcript(video_id),
         state=pipeline.get_state(video_id),
+        highlight=highlight,
     )
 
 
@@ -213,6 +223,22 @@ def keyframe(video_id: str, name: str) -> FileResponse:
     if not path.exists() or path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
         raise HTTPException(404, "keyframe not found")
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/videos/{video_id}/highlight")
+def highlight_reel(video_id: str) -> FileResponse:
+    """The M7 highlight reel — built on demand if a checkpoint is configured."""
+    from core import pipeline
+
+    _ensure_local_artifacts(video_id)
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    path = pipeline.get_highlight(video_id, build=True)
+    if not path or not Path(path).exists():
+        raise HTTPException(
+            404, "no highlight reel — the importance model isn't trained/enabled for this run"
+        )
+    return FileResponse(path, media_type="video/mp4", filename=f"{video_id}-highlight.mp4")
 
 
 @app.post("/api/videos/{video_id}/ask", response_model=schemas.AskResponse)

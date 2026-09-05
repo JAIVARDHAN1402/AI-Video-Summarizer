@@ -98,3 +98,4 @@ class VideoResult(BaseModel):
     scenes: Optional[dict[str, Any]] = None
     transcript: Optional[dict[str, Any]] = None
     state: dict[str, Any] = {}
+    highlight: Optional[dict[str, Any]] = None  # {url, seconds, scene_ids} when a reel exists

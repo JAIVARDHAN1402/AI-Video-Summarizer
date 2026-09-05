@@ -135,32 +135,12 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
       {tab === "Q&A" && <AskBox videoId={videoId} sourceRef={sourceRef} onSeek={onSeek} />}
 
       {tab === "Scenes" && (
-        <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-4">
-          {scenes.map((s: any, i: number) => (
-            <div key={i} className="overflow-hidden rounded border border-border bg-surface pb-2">
-              {s.keyframe_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={s.keyframe_url} alt="" loading="lazy" className="aspect-video w-full object-cover" />
-              )}
-              <div className="mt-2 flex flex-wrap items-center gap-1.5 px-2.5">
-                <Stamp sec={s.start} sourceRef={sourceRef} onSeek={onSeek} />
-                {(s.objects || []).slice(0, 3).map((o: any, k: number) => (
-                  <span
-                    key={k}
-                    className="rounded-xs border border-border bg-surface-raised px-1.5 py-0.5 text-[0.68rem] text-ink-muted"
-                  >
-                    {o.label}
-                  </span>
-                ))}
-              </div>
-              {s.ocr_text && (
-                <p className="mt-1 line-clamp-3 px-2.5 text-[0.72rem] leading-snug text-ink-dim">
-                  {s.ocr_text}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
+        <ScenesView
+          scenes={scenes}
+          highlight={data.highlight}
+          sourceRef={sourceRef}
+          onSeek={onSeek}
+        />
       )}
 
       {tab === "Report" && <ReportView timings={timings} dur={dur} meta={data.meta} />}
@@ -193,6 +173,106 @@ function FallbackSummary({
       ) : (
         <p className="prose-body">{summary?.overall_summary || "No summary was produced."}</p>
       )}
+    </div>
+  );
+}
+
+function ScenesView({
+  scenes,
+  highlight,
+  sourceRef,
+  onSeek,
+}: {
+  scenes: any[];
+  highlight: VideoResult["highlight"];
+  sourceRef: string;
+  onSeek: (s: number) => void;
+}) {
+  const hasImportance = scenes.some((s) => typeof s.importance === "number");
+  const [byImportance, setByImportance] = useState(false);
+  const ordered = useMemo(() => {
+    if (!byImportance) return scenes;
+    return [...scenes].sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0));
+  }, [scenes, byImportance]);
+
+  return (
+    <div className="flex flex-col gap-5">
+      {highlight && (
+        <section>
+          <SectionHead
+            title="Highlight reel"
+            hint={
+              highlight.seconds
+                ? `${Math.round(highlight.seconds)}s · ${highlight.scene_ids.length} top scenes`
+                : "top scenes by importance"
+            }
+          />
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video
+            controls
+            src={highlight.url}
+            className="w-full rounded border border-border bg-black"
+          />
+        </section>
+      )}
+
+      {hasImportance && (
+        <div className="flex items-center gap-2 text-[0.8rem]">
+          <span className="text-ink-dim">Order</span>
+          <div className="flex gap-0.5 rounded border border-border bg-surface p-1">
+            {[
+              ["Timeline", false],
+              ["Importance", true],
+            ].map(([label, val]) => (
+              <button
+                key={label as string}
+                onClick={() => setByImportance(val as boolean)}
+                className={`rounded-xs px-2.5 py-1 font-semibold transition-colors ${
+                  byImportance === val ? "bg-surface-active text-ink" : "text-ink-dim hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-4">
+        {ordered.map((s: any, i: number) => (
+          <div key={i} className="overflow-hidden rounded border border-border bg-surface pb-2">
+            {s.keyframe_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={s.keyframe_url} alt="" loading="lazy" className="aspect-video w-full object-cover" />
+            )}
+            {typeof s.importance === "number" && (
+              <div className="h-1 w-full bg-surface-raised">
+                <div
+                  className="h-full bg-gradient-to-r from-accent to-violet"
+                  style={{ width: `${Math.round(s.importance * 100)}%` }}
+                  title={`importance ${(s.importance * 100).toFixed(0)}%`}
+                />
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 px-2.5">
+              <Stamp sec={s.start} sourceRef={sourceRef} onSeek={onSeek} />
+              {(s.objects || []).slice(0, 3).map((o: any, k: number) => (
+                <span
+                  key={k}
+                  className="rounded-xs border border-border bg-surface-raised px-1.5 py-0.5 text-[0.68rem] text-ink-muted"
+                >
+                  {o.label}
+                </span>
+              ))}
+            </div>
+            {s.ocr_text && (
+              <p className="mt-1 line-clamp-3 px-2.5 text-[0.72rem] leading-snug text-ink-dim">
+                {s.ocr_text}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

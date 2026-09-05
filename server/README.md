@@ -24,6 +24,7 @@ Open `http://localhost:8000/docs` for the interactive API.
 | `GET` | `/api/jobs/{id}/events` | SSE stream of progress until terminal |
 | `GET` | `/api/videos/{video_id}` | Finished result: understanding, scenes, transcript |
 | `GET` | `/api/videos/{video_id}/keyframes/{name}` | A keyframe image (never requires auth) |
+| `GET` | `/api/videos/{video_id}/highlight` | M7 highlight reel (mp4), built on demand; 404 if no trained model |
 | `POST` | `/api/videos/{video_id}/ask` | Grounded Q&A — `{question}` |
 | `GET` | `/api/scheduler/{classes,sla,preview}` | Worker classes, SLA evidence, routing preview |
 | `GET` | `/api/health` | Status, queue backend, auth/storage mode, hardware profile |
@@ -53,6 +54,8 @@ they're open.
 | `VS_STORAGE_BACKEND` | `local` | `local` or `s3` (AWS S3 / Cloudflare R2 / MinIO; needs boto3) |
 | `VS_S3_BUCKET` / `VS_S3_ENDPOINT_URL` / `VS_S3_REGION` / `VS_S3_PREFIX` | — | S3 target (endpoint URL points at R2/MinIO) |
 | `VS_MIRROR_ARTIFACTS` | `0` | With `s3`, copy each finished `cache/<video_id>/` tree to the bucket |
+| `VS_HIGHLIGHT_MODEL` | auto | M7 checkpoint path; `off` to disable. Default `ml/checkpoints/importance.pt` if present |
+| `VS_HIGHLIGHT_AUTO` / `VS_HIGHLIGHT_MAX_SEC` | `1` / `90` | Build the reel at end of run; reel length cap |
 
 ## Auth
 

@@ -74,9 +74,10 @@ export interface VideoResult {
   meta: Record<string, any>;
   understanding: Understanding | null;
   summary: Record<string, any> | null;
-  scenes: { scenes: any[] } | null;
+  scenes: { scenes: any[]; importance_ranked?: number[] } | null;
   transcript: { segments: { start: number; end: number; text: string }[]; language?: string } | null;
   state: Record<string, any>;
+  highlight: { url: string; seconds: number | null; scene_ids: number[] } | null;
 }
 
 async function j<T>(res: Response): Promise<T> {

@@ -148,6 +148,11 @@ elif _highlight_env:
 else:
     _default_ckpt = PROJECT_ROOT / "ml" / "checkpoints" / "importance.pt"
     HIGHLIGHT_MODEL_PATH = str(_default_ckpt) if _default_ckpt.exists() else None
+
+# Highlight reel: greedy-pick top-importance scenes up to this many seconds.
+HIGHLIGHT_MAX_SECONDS = float(os.getenv("VS_HIGHLIGHT_MAX_SEC", "90"))
+# Build the reel automatically at the end of a pipeline run (needs a checkpoint).
+HIGHLIGHT_AUTO_BUILD = os.getenv("VS_HIGHLIGHT_AUTO", "1").strip().lower() in {"1", "true", "yes"}
 # Hard cap on keyframes. Every per-scene cost downstream (YOLO, CLIP, OCR,
 # the chapter grid, the Scenes gallery) scales with this number, so capping it
 # is what makes a 90-minute video cost the same in the vision stage as a
