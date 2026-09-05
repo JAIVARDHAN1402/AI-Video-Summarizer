@@ -218,6 +218,24 @@ with st.container(border=True):
         )
         upload_clicked = st.button("Summarize video", type="primary", key="go_upload")
 
+    st.write("")
+    col_type, col_topic = st.columns([1, 1.4])
+    with col_type:
+        st.session_state.video_type = st.selectbox(
+            "What kind of video is this?",
+            list(VIDEO_TYPE_LABELS),
+            index=list(VIDEO_TYPE_LABELS).index(st.session_state.video_type),
+            help="Steers the explanation. Coding videos also get the algorithm and "
+                 "code in several languages; meetings get decisions and action items.",
+        )
+    with col_topic:
+        st.session_state.topic = st.text_input(
+            "Topic (optional)",
+            value=st.session_state.topic,
+            placeholder="e.g. Backtracking, Transformers, Q3 roadmap",
+            help="If you know the subject, naming it sharpens the extraction.",
+        )
+
     force = st.checkbox(
         "Reprocess from scratch", value=False,
         help="Ignore anything already cached for this video.",
@@ -264,6 +282,8 @@ if submitted_url or submitted_upload:
             result = pl.process(
                 source_ref, is_upload=is_upload, force=force,
                 progress_cb=on_progress, quality_floor=profile["quality_floor"],
+                video_type=VIDEO_TYPE_LABELS[st.session_state.video_type],
+                topic=st.session_state.topic.strip(),
             )
             st.session_state.active_video_id = result["video_id"]
             st.session_state.sources[result["video_id"]] = {
