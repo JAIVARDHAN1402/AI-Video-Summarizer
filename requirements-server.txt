@@ -1,0 +1,12 @@
+# Production API tier (server/). Install on top of requirements.txt.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+python-multipart==0.0.20
+sse-starlette==2.1.3
+httpx==0.28.1
+
+# Optional: distributed queue (VS_QUEUE_BACKEND=redis). Lets workers run as
+# separate processes / machines — the substrate for the cross-hardware scheduler.
+# rq==2.0.0
+# redis==5.2.1
