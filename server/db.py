@@ -68,6 +68,11 @@ class Job(Base):
     duration_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
 
     # --- lifecycle -----------------------------------------------------------
+    routed_worker_class: Mapped[Optional[str]] = mapped_column(String(48), default=None)
+    predicted_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    sla_target_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    sla_met: Mapped[Optional[bool]] = mapped_column(default=None)
+
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, native_enum=False, length=16), default=JobStatus.QUEUED, index=True
     )
@@ -102,6 +107,10 @@ class Job(Base):
             "video_type": self.video_type,
             "topic": self.topic,
             "profile": self.profile,
+            "routed_worker_class": self.routed_worker_class,
+            "predicted_sec": self.predicted_sec,
+            "sla_target_sec": self.sla_target_sec,
+            "sla_met": self.sla_met,
             "timings": self.timings or {},
             "worker_class": self.worker_class,
             "elapsed_sec": self.elapsed_sec(),
@@ -109,6 +118,47 @@ class Job(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
         }
+
+
+class SchedulerCost(Base):
+    """One learned cost figure for a (worker class, metric) pair.
+
+    The distributed scheduler's online cost model. ``key`` is a coarse metric
+    like "total:per_min"; ``seconds`` is the blended estimate; ``samples`` is
+    how many completed jobs have fed it. Kept per worker class so a GPU node
+    and a CPU node each carry their own numbers.
+    """
+
+    __tablename__ = "scheduler_costs"
+
+    worker_class: Mapped[str] = mapped_column(String(48), primary_key=True)
+    key: Mapped[str] = mapped_column(String(48), primary_key=True)
+    seconds: Mapped[float] = mapped_column(Float)
+    samples: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SlaObservation(Base):
+    """Predicted vs actual wall-clock for one completed job.
+
+    This is the evidence table: aggregate it to show how often the scheduler's
+    routing kept the SLA, and by how much a fixed-configuration baseline would
+    have overrun.
+    """
+
+    __tablename__ = "sla_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    worker_class: Mapped[str] = mapped_column(String(48), index=True)
+    duration_sec: Mapped[float] = mapped_column(Float)
+    predicted_sec: Mapped[float] = mapped_column(Float)
+    actual_sec: Mapped[float] = mapped_column(Float)
+    sla_target_sec: Mapped[float] = mapped_column(Float)
+    met: Mapped[bool] = mapped_column()
+    baseline_sec: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    baseline_met: Mapped[Optional[bool]] = mapped_column(default=None)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 def init_db() -> None:

@@ -42,6 +42,10 @@ class JobView(BaseModel):
     video_type: str
     topic: str
     profile: str
+    routed_worker_class: Optional[str] = None
+    predicted_sec: Optional[float] = None
+    sla_target_sec: Optional[float] = None
+    sla_met: Optional[bool] = None
     timings: dict[str, Any] = {}
     worker_class: Optional[str] = None
     elapsed_sec: Optional[float] = None

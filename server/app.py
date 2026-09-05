@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
-from server import config, jobs, schemas
+from server import config, jobs, schemas, scheduler
 from server.db import JobStatus, init_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
@@ -182,6 +182,32 @@ def ask(video_id: str, req: schemas.AskRequest) -> schemas.AskResponse:
         confidence=result.get("confidence", "low"),
         sources=result.get("sources", []),
     )
+
+
+@app.get("/api/scheduler/classes")
+def scheduler_classes() -> list[dict]:
+    """Registered worker classes and their current cost-per-video-minute."""
+    return scheduler.classes_view()
+
+
+@app.get("/api/scheduler/sla")
+def scheduler_sla() -> dict:
+    """SLA adherence: how often routing held the budget, and how a fixed
+    'always accurate models' assignment would have compared."""
+    return scheduler.sla_stats()
+
+
+@app.post("/api/scheduler/preview")
+def scheduler_preview(req: schemas.CreateJobRequest) -> dict:
+    """Show the routing decision for a request without queuing it."""
+    from core import ingest
+
+    try:
+        duration = float(ingest.probe_remote(req.url).get("duration_sec") or 900.0)
+    except Exception:
+        duration = 900.0
+    sla = jobs._PROFILE_BUDGET.get(req.profile) or config.DEFAULT_BUDGET_SEC
+    return scheduler.route(duration, req.video_type, sla).to_dict()
 
 
 @app.get("/api/health")

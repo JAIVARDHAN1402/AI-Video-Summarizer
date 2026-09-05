@@ -225,8 +225,21 @@ def record_observation(key: str, rtf: float) -> None:
     logger.debug("recorded rtf %s=%.4f (was %s)", key, blended, previous)
 
 
-def _rtf(key: str, reference_rtf: float, profile: HardwareProfile) -> float:
-    """Predicted RTF for a config: measured if we've seen it, else scaled."""
+def _rtf(
+    key: str, reference_rtf: float, profile: HardwareProfile,
+    cost_override: "dict[str, float] | None" = None,
+) -> float:
+    """Predicted per-unit cost for a config key.
+
+    Resolution order:
+      1. ``cost_override[key]`` — a figure calibrated for a *specific* worker
+         class, passed by the distributed scheduler when it plans a job "as if
+         it ran on class X" instead of on the machine doing the planning.
+      2. this machine's own measured figure (``profile.observed_rtf``).
+      3. the shipped reference, scaled by the probed CPU speed.
+    """
+    if cost_override is not None and key in cost_override:
+        return cost_override[key]
     observed = profile.observed_rtf.get(key)
     if observed is not None:
         return observed
@@ -364,6 +377,7 @@ def ocr_key() -> str:
 def _vision_seconds(
     duration: float, sampled: bool, max_keyframes: int,
     ocr_frames: int, profile: HardwareProfile,
+    cost_override: "dict[str, float] | None" = None,
 ) -> float:
     """Predicted wall-clock for the whole vision stage under these knobs.
 
@@ -375,15 +389,15 @@ def _vision_seconds(
     if sampled:
         segment_sec = (
             min(max_keyframes * 2, config.SAMPLED_SEGMENTATION_MAX_SAMPLES)
-            * _rtf("segment:sampled:per_frame", config.SEGMENT_REFERENCE_SEC_PER_FRAME, profile)
+            * _rtf("segment:sampled:per_frame", config.SEGMENT_REFERENCE_SEC_PER_FRAME, profile, cost_override)
         )
     else:
         segment_sec = (
-            _rtf("scene:detect", config.SCENE_DETECT_REFERENCE_RTF, profile) * duration
+            _rtf("scene:detect", config.SCENE_DETECT_REFERENCE_RTF, profile, cost_override) * duration
             + max_keyframes * config.KEYFRAME_REFERENCE_SEC_PER_FRAME / profile.speed
         )
-    tag_sec = max_keyframes * _rtf("tag:per_frame", config.TAG_REFERENCE_SEC_PER_FRAME, profile)
-    ocr_sec = ocr_frames * _rtf(ocr_key(), config.OCR_REFERENCE_SEC_PER_FRAME, profile)
+    tag_sec = max_keyframes * _rtf("tag:per_frame", config.TAG_REFERENCE_SEC_PER_FRAME, profile, cost_override)
+    ocr_sec = ocr_frames * _rtf(ocr_key(), config.OCR_REFERENCE_SEC_PER_FRAME, profile, cost_override)
     return segment_sec + tag_sec + ocr_sec
 
 
@@ -392,6 +406,7 @@ def plan_for(
     budget_sec: Optional[float] = None,
     profile: Optional[HardwareProfile] = None,
     quality_floor: bool = False,
+    cost_override: "dict[str, float] | None" = None,
 ) -> ExecutionPlan:
     """Choose the heaviest configuration predicted to fit the time budget.
 
@@ -402,6 +417,10 @@ def plan_for(
         quality_floor: When True, pin both ladders to their top rung and keep
             all optional work. Used by the UI's "Quality" profile, where the
             user has explicitly traded the time budget away for accuracy.
+        cost_override: ``{cost_key: seconds_per_unit}`` calibrated for a
+            particular worker class. Supplied by the distributed scheduler so
+            it can predict a job's cost on each class in its fleet, not just on
+            the machine planning. ``None`` = plan for this machine (default).
 
     Returns:
         A fully-populated :class:`ExecutionPlan`.
@@ -428,7 +447,7 @@ def plan_for(
     else:
         chosen_asr = ASR_LADDER[-1]
         for rung in ASR_LADDER:
-            if _rtf(rung.key, rung.reference_sec_per_speech_sec, profile) * speech_estimate <= analyze_budget:
+            if _rtf(rung.key, rung.reference_sec_per_speech_sec, profile, cost_override) * speech_estimate <= analyze_budget:
                 chosen_asr = rung
                 break
         else:
@@ -436,7 +455,7 @@ def plan_for(
                 "This video is long enough that even the fastest transcription "
                 "model may overrun the target; accuracy was traded for speed."
             )
-    asr_predicted = _rtf(chosen_asr.key, chosen_asr.reference_sec_per_speech_sec, profile) * speech_estimate
+    asr_predicted = _rtf(chosen_asr.key, chosen_asr.reference_sec_per_speech_sec, profile, cost_override) * speech_estimate
 
     # --- Summarizer rung --------------------------------------------------
     # Cost here is (number of chunks) x (seconds per chunk), and the chunk
@@ -452,12 +471,12 @@ def plan_for(
     else:
         chosen_sum = SUMMARIZER_LADDER[-1]
         for rung in SUMMARIZER_LADDER:
-            per_chunk = _rtf(rung.key, rung.reference_sec_per_chunk, profile)
+            per_chunk = _rtf(rung.key, rung.reference_sec_per_chunk, profile, cost_override)
             if per_chunk * est_chunks <= summarize_budget:
                 chosen_sum = rung
                 break
 
-    sum_per_chunk = _rtf(chosen_sum.key, chosen_sum.reference_sec_per_chunk, profile)
+    sum_per_chunk = _rtf(chosen_sum.key, chosen_sum.reference_sec_per_chunk, profile, cost_override)
 
     # The section-by-section walkthrough is the primary output and always
     # covers the whole video. Its length is chosen from the duration — one
@@ -509,8 +528,8 @@ def plan_for(
     # Vision shares the analyze budget with ASR. If it would become the
     # critical path instead, shed optional work rather than blow the budget.
     if vision_predicted > analyze_budget and not quality_floor:
-        ocr_per_frame = _rtf(ocr_key(), config.OCR_REFERENCE_SEC_PER_FRAME, profile)
-        fixed_cost = _vision_seconds(duration, sampled, max_keyframes, 0, profile)
+        ocr_per_frame = _rtf(ocr_key(), config.OCR_REFERENCE_SEC_PER_FRAME, profile, cost_override)
+        fixed_cost = _vision_seconds(duration, sampled, max_keyframes, 0, profile, cost_override)
         affordable = int((analyze_budget - fixed_cost) / max(ocr_per_frame, 1e-6))
         if affordable < config.OCR_MIN_USEFUL_FRAMES:
             ocr_enabled = False

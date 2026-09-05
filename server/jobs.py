@@ -16,6 +16,7 @@ from typing import Optional
 
 from server import config
 from server.db import Job, JobStatus, session
+from server import scheduler
 
 logger = logging.getLogger("server.jobs")
 
@@ -39,8 +40,47 @@ def create_job(
         db.add(job)
         db.commit()
         db.refresh(job)
-        logger.info("created job %s (%s, %s)", job.id, video_type, profile)
-        return job
+
+    # Route it: pick the worker class for this job against its SLA. Best-effort
+    # — a routing failure must not stop the job being queued.
+    try:
+        preview = _preview_duration(source_ref)
+        sla = _PROFILE_BUDGET.get(profile) or config.DEFAULT_BUDGET_SEC
+        decision = scheduler.route(preview, video_type, sla)
+        with session() as db:
+            row = db.get(Job, job.id)
+            row.routed_worker_class = decision.worker_class
+            row.predicted_sec = round(decision.predicted_sec, 1)
+            row.sla_target_sec = sla
+            db.commit()
+            db.refresh(row)
+            job = row
+        logger.info(
+            "job %s routed -> %s (predicted %.0fs / SLA %.0fs)",
+            job.id, decision.worker_class, decision.predicted_sec, sla,
+        )
+    except Exception:
+        logger.warning("routing failed for job %s; queuing unrouted", job.id, exc_info=True)
+
+    return job
+
+
+def _preview_duration(source_ref: str) -> float:
+    """Cheap duration lookup for routing, before the job runs.
+
+    Uses a cached meta.json if the video was seen before, else a yt-dlp
+    metadata probe. Falls back to a neutral 15 minutes so routing still has a
+    number to work with.
+    """
+    from core import cache, ingest
+
+    try:
+        cached = cache.read_json(cache.get_video_id(source_ref), "meta")
+        if cached and cached.get("duration_sec"):
+            return float(cached["duration_sec"])
+        return float(ingest.probe_remote(source_ref).get("duration_sec") or 900.0)
+    except Exception:
+        return 900.0
 
 
 def get_job(job_id: str) -> Optional[Job]:
@@ -134,7 +174,18 @@ def run_job(job_id: str) -> None:
             row.duration_sec = result["meta"].get("duration_sec")
             row.timings = result.get("timings", {})
             row.finished_at = dt.datetime.now(dt.timezone.utc)
+            row.sla_met = (
+                result.get("timings", {}).get("total", 0) <= (row.sla_target_sec or 1e9)
+            )
             db.commit()
+            outcome_row = row
+        else:
+            outcome_row = None
+    try:
+        if outcome_row is not None:
+            scheduler.record_outcome(outcome_row)
+    except Exception:
+        logger.warning("could not record scheduler outcome for %s", job_id, exc_info=True)
     logger.info("job %s done -> video %s", job_id, result["video_id"])
 
 
