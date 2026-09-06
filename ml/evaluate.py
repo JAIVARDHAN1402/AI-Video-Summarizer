@@ -85,6 +85,14 @@ def summary_f1(
 
 
 def rank_correlation(pred_scores: np.ndarray, mean_user_scores: np.ndarray) -> tuple[float, float]:
+    """Correlation against the *averaged* annotator score.
+
+    This is the model's own training target, so it is a low-variance signal for
+    early stopping — but averaging smooths away the disagreement between
+    annotators, which makes it far easier than the published metric. Do not
+    compare it to numbers in the literature; use
+    :func:`rank_correlation_per_user` for that.
+    """
     from scipy.stats import kendalltau, spearmanr
 
     n = min(len(pred_scores), len(mean_user_scores))
@@ -96,6 +104,34 @@ def rank_correlation(pred_scores: np.ndarray, mean_user_scores: np.ndarray) -> t
     return float(np.nan_to_num(tau)), float(np.nan_to_num(rho))
 
 
+def rank_correlation_per_user(
+    pred_scores: np.ndarray, user_scores: np.ndarray,
+) -> tuple[float, float]:
+    """Mean correlation against each annotator separately (Otani et al., CVPR 2019).
+
+    The comparable metric: correlate the prediction with every annotator's own
+    scores and average the coefficients. Much harder than correlating with
+    their mean — on TVSum, human-vs-human agreement under this protocol is
+    only about 0.18 Kendall tau.
+    """
+    from scipy.stats import kendalltau, spearmanr
+
+    n = min(len(pred_scores), user_scores.shape[0])
+    p = pred_scores[:n]
+    if np.std(p) < 1e-9:
+        return 0.0, 0.0
+    taus, rhos = [], []
+    for u in range(user_scores.shape[1]):
+        g = user_scores[:n, u].astype(np.float64)
+        if np.std(g) < 1e-9:
+            continue
+        taus.append(np.nan_to_num(kendalltau(p, g).correlation))
+        rhos.append(np.nan_to_num(spearmanr(p, g).correlation))
+    if not taus:
+        return 0.0, 0.0
+    return float(np.mean(taus)), float(np.mean(rhos))
+
+
 def evaluate_video(
     pred_scores: np.ndarray, meta: dict, gt_scores: np.ndarray, with_f1: bool = True,
 ) -> dict:
@@ -105,11 +141,19 @@ def evaluate_video(
     """
     out = {"video_id": meta["video_id"], "dataset": meta["dataset"]}
     tau, rho = rank_correlation(pred_scores, gt_scores)
-    out["kendall_tau"] = tau
-    out["spearman_rho"] = rho
+    out["kendall_tau_vs_mean"] = tau
+    out["spearman_rho_vs_mean"] = rho
     us = meta.get("user_scores")
-    if with_f1 and us is not None:
-        out["f1"] = summary_f1(pred_scores, meta["change_points"], np.asarray(us), meta["dataset"])
+    if us is not None:
+        us = np.asarray(us)
+        # The comparable numbers; reported under the plain names.
+        ptau, prho = rank_correlation_per_user(pred_scores, us)
+        out["kendall_tau"] = ptau
+        out["spearman_rho"] = prho
+        if with_f1:
+            out["f1"] = summary_f1(pred_scores, meta["change_points"], us, meta["dataset"])
+    else:
+        out["kendall_tau"], out["spearman_rho"] = tau, rho
     return out
 
 
@@ -165,20 +209,17 @@ def aggregate(rows: list[dict]) -> dict:
         vals = [r[key] for r in rows if key in r]
         return float(np.mean(vals)) if vals else None
 
+    keys = ("f1", "kendall_tau", "spearman_rho", "kendall_tau_vs_mean", "spearman_rho_vs_mean")
     by_ds: dict[str, dict] = {}
     for ds in {r["dataset"] for r in rows}:
         sub = [r for r in rows if r["dataset"] == ds]
-        by_ds[ds] = {
-            "n": len(sub),
-            "f1": float(np.mean([r["f1"] for r in sub if "f1" in r])) if any("f1" in r for r in sub) else None,
-            "kendall_tau": float(np.mean([r["kendall_tau"] for r in sub])),
-            "spearman_rho": float(np.mean([r["spearman_rho"] for r in sub])),
-        }
+        by_ds[ds] = {"n": len(sub)}
+        for k in keys:
+            vals = [r[k] for r in sub if k in r]
+            by_ds[ds][k] = float(np.mean(vals)) if vals else None
     return {
         "n_videos": len(rows),
-        "f1": mean("f1"),
-        "kendall_tau": mean("kendall_tau"),
-        "spearman_rho": mean("spearman_rho"),
+        **{k: mean(k) for k in keys},
         "by_dataset": by_ds,
     }
 

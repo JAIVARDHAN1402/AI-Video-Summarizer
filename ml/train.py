@@ -101,8 +101,9 @@ def train_cv(
         for ep in range(epochs):
             tr_loss = _run_epoch(model, train_loader, opt, device, train=True)
             sched.step()
-            # Selection is on tau, so skip the knapsack F1 here — it is the
-            # expensive half of a validation pass and nothing reads it.
+            # Selection is on the per-annotator tau — the metric actually
+            # reported — so skip the knapsack F1 here; it is the expensive half
+            # of a validation pass and nothing reads it until the fold ends.
             agg, _ = _eval_fold(model, val_ds, device, with_f1=False)
             metric = agg["kendall_tau"] or 0.0
             if metric > best_metric:
@@ -134,7 +135,8 @@ def train_cv(
 
 
 def _summarize(fold_reports: list[dict]) -> dict:
-    keys = ["kendall_tau", "spearman_rho", "f1"]
+    keys = ["kendall_tau", "spearman_rho", "f1",
+            "kendall_tau_vs_mean", "spearman_rho_vs_mean"]
     out = {}
     for key in keys:
         vals = [f["metrics"][key] for f in fold_reports if f["metrics"].get(key) is not None]
@@ -172,6 +174,8 @@ def main() -> int:
     ap.add_argument("--data-root", type=Path, help="datasets root (only needed if shards aren't prepared)")
     ap.add_argument("--prepared", type=Path, default=mdata.PREPARED_DIR)
     ap.add_argument("--prepare", action="store_true", help="(re)build feature shards before training")
+    ap.add_argument("--resegment", action="store_true",
+                    help="recompute KTS change points in existing shards (keeps the CLIP features)")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--lr", type=float, default=5e-4)
@@ -188,6 +192,8 @@ def main() -> int:
         if not args.data_root:
             ap.error("--prepare needs --data-root")
         mdata.prepare_shards(args.data_root, args.prepared)
+    elif args.resegment:
+        mdata.resegment_shards(args.prepared)
 
     shards = mdata.load_shards(args.prepared)
     if len(shards) < args.folds:

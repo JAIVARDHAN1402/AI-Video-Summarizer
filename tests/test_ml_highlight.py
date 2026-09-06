@@ -25,6 +25,25 @@ def test_kts_finds_the_obvious_boundary():
     assert all(b[0] < b[1] for b in bounds)
 
 
+def test_cpd_fixed_returns_exactly_the_requested_change_points():
+    """The DP counts segments, backtrack counts change points — an off-by-one
+    here silently halves the shot granularity instead of failing."""
+    rng = np.random.default_rng(1)
+    feats = np.vstack([
+        rng.normal(0.0, 0.25, (100, 16)),
+        rng.normal(6.0, 0.25, (100, 16)),
+    ]).astype(np.float32)
+    feats /= np.linalg.norm(feats, axis=1, keepdims=True)
+
+    one = kts.cpd_fixed(feats, 1)
+    assert len(one) == 1
+    assert abs(int(one[0]) - 100) <= 3          # lands on the real boundary
+
+    for k in (1, 5, 17):
+        assert len(kts.cpd_fixed(feats, k)) == k
+        assert len(kts.segment_bounds(len(feats), kts.cpd_fixed(feats, k))) == k + 1
+
+
 def test_knapsack_respects_budget_and_picks_high_scoring_shots():
     shots = [(i * 5, (i + 1) * 5) for i in range(20)]      # 100 frames
     scores = np.zeros(100)

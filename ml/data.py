@@ -20,7 +20,20 @@ from ml.datasets import VideoAnnotation, load_all
 logger = logging.getLogger("ml.data")
 
 PREPARED_DIR = Path(__file__).resolve().parent / "prepared"
-MAX_KTS_NCP = 40
+
+# KTS candidate change points: one per this many seconds of video, matching the
+# SumMe/TVSum evaluation pipelines. A flat cap instead of a duration-scaled one
+# makes shots far too long for the 15%-length knapsack to approximate a human
+# summary, which shows up as a badly depressed F1 on the longer TVSum clips.
+KTS_SECONDS_PER_CHANGE_POINT = 2.0
+
+
+def kts_change_points(n_sampled: int, sample_fps: float) -> int:
+    """How many change points to cut, for ~one shot per
+    KTS_SECONDS_PER_CHANGE_POINT seconds. k change points give k+1 shots."""
+    duration_sec = n_sampled / max(sample_fps, 1e-6)
+    shots = max(int(np.ceil(duration_sec / KTS_SECONDS_PER_CHANGE_POINT)), 1)
+    return max(shots - 1, 1)
 
 
 def _shard_path(out_dir: Path, ann: VideoAnnotation) -> Path:
@@ -44,7 +57,9 @@ def prepare_one(ann: VideoAnnotation, out_dir: Path, target_fps: float, overwrit
         us = ann.user_scores[np.clip(frame_idx, 0, ann.user_scores.shape[0] - 1)]
         users_sampled = us.astype(np.float32)
 
-    change_points = kts.cpd_auto(fps_features, MAX_KTS_NCP)
+    change_points = kts.cpd_fixed(
+        fps_features, kts_change_points(len(fps_features), target_fps)
+    )
 
     np.savez_compressed(
         path,
@@ -142,3 +157,25 @@ def collate(batch):
 
 def load_shards(out_dir: Path = PREPARED_DIR) -> list[Path]:
     return sorted(Path(out_dir).glob("*.npz"))
+
+
+def resegment_shards(out_dir: Path = PREPARED_DIR, target_fps: float = feat.SAMPLE_FPS) -> int:
+    """Recompute KTS change points in place, reusing the stored CLIP features.
+
+    Segmentation settings change more often than the features do, and the
+    features are the expensive half of preparation (decode + CLIP over every
+    video). This rewrites only ``change_points``.
+    """
+    paths = load_shards(out_dir)
+    for path in paths:
+        z = dict(np.load(path, allow_pickle=True))
+        features = z["features"]
+        z["change_points"] = np.asarray(
+            kts.cpd_fixed(features, kts_change_points(len(features), target_fps)),
+            dtype=np.int64,
+        )
+        np.savez_compressed(path, **z)
+        logger.info("resegmented %s (%d frames -> %d shots)",
+                    path.name, len(features), len(z["change_points"]) + 1)
+    logger.info("resegmented %d shards", len(paths))
+    return len(paths)

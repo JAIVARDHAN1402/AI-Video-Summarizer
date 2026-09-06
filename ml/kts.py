@@ -26,10 +26,25 @@ def gaussian_kernel(x: np.ndarray) -> np.ndarray:
     return np.exp(-d2 / (2.0 * med + 1e-12))
 
 
+def linear_kernel(x: np.ndarray) -> np.ndarray:
+    """Dot-product Gram matrix — cosine similarity for L2-normalised features.
+
+    This is what the SumMe/TVSum evaluation pipelines use, so it is the
+    default: matching their segmentation is what makes the F1 comparable.
+    """
+    x = x.astype(np.float64)
+    return x @ x.T
+
+
 def _segment_costs(K: np.ndarray) -> np.ndarray:
-    """cost[a, b] = within-segment kernel variance of frames [a, b), for b > a.
+    """``costT[b, a]`` = within-segment kernel variance of frames [a, b), b > a.
 
         cost(a, b) = sum_t K[t,t]  -  (1/(b-a)) * sum_{i,j in [a,b)} K[i,j]
+
+    Returned transposed on purpose: the DP's inner step reads all start points
+    for one end point, so keeping those contiguous turns a strided column read
+    into a row read. That is the difference between the DP being usable and
+    not, once the change-point count is in the hundreds.
     """
     n = K.shape[0]
     diag = np.diag(K).astype(np.float64)
@@ -45,15 +60,16 @@ def _segment_costs(K: np.ndarray) -> np.ndarray:
         cd = csum_diag[b] - csum_diag[a]
         block = Cdiag[b] - C[a, b] - C[b, a] + C[a, a]
         cost[a, b] = cd - block / (b - a)
-    return cost
+    return np.ascontiguousarray(cost.T)
 
 
-def _dp(cost: np.ndarray, n: int, max_ncp: int, lmin: int) -> tuple[np.ndarray, np.ndarray]:
+def _dp(costT: np.ndarray, n: int, max_ncp: int, lmin: int) -> tuple[np.ndarray, np.ndarray]:
     """Change-point DP up to ``max_ncp`` splits.
 
     ``I[k, l]`` is the best cost of splitting the first ``l`` frames into ``k``
     segments, so one pass yields the optimum for *every* k — there is no reason
-    to re-run it per candidate count.
+    to re-run it per candidate count. ``costT`` is transposed (see
+    :func:`_segment_costs`) so the inner read is contiguous.
     """
     INF = 1e18
     I = np.full((max_ncp + 1, n + 1), INF)
@@ -65,7 +81,7 @@ def _dp(cost: np.ndarray, n: int, max_ncp: int, lmin: int) -> tuple[np.ndarray, 
             lo, hi = (k - 1) * lmin, l - lmin + 1
             if hi <= lo:
                 continue
-            cand = I[k - 1, lo:hi] + cost[lo:hi, l]
+            cand = I[k - 1, lo:hi] + costT[l, lo:hi]
             m = int(np.argmin(cand))
             if cand[m] < I[k, l]:
                 I[k, l] = cand[m]
@@ -91,14 +107,43 @@ def cpd_nonlin(K: np.ndarray, ncp: int, lmin: int = 1) -> tuple[np.ndarray, floa
     return _backtrack(prev, n, ncp), float(I[ncp, n])
 
 
+def cpd_fixed(
+    features: np.ndarray, n_change_points: int, lmin: int = 1, kernel: str = "linear",
+) -> np.ndarray:
+    """Exactly ``n_change_points`` change points — no model-selection penalty.
+
+    Potapov's penalty is calibrated against the kernel magnitude, and the
+    reference pipeline feeds it unnormalised GoogleNet features. Ours are
+    L2-normalised CLIP embeddings, so the kernel is O(1), the penalty swamps
+    the cost term, and the "optimal" count collapses to ~20 segments whatever
+    the cap. Shot-level evaluation wants a known granularity anyway, so ask for
+    it directly instead of trusting a penalty tuned for a different scale.
+
+    Note the DP counts *segments*: k change points means k+1 segments.
+    """
+    n = features.shape[0]
+    if n < 3 or n_change_points < 1:
+        return np.array([], dtype=np.int64)
+    n_segments = int(min(n_change_points + 1, n))
+    K = linear_kernel(features) if kernel == "linear" else gaussian_kernel(features)
+    _, prev = _dp(_segment_costs(K), n, n_segments, lmin)
+    return _backtrack(prev, n, n_segments)
+
+
 def cpd_auto(
     features: np.ndarray, max_ncp: int, vmax: float = 1.0, lmin: int = 1,
+    kernel: str = "linear",
 ) -> np.ndarray:
     """Pick the number of change points automatically (penalised objective).
 
     Builds the kernel and segment costs once and runs the DP once; the
     penalised score for every candidate count is then just a read off the
     table.
+
+    ``max_ncp`` is an upper bound, not a target — the penalty picks the actual
+    count. The SumMe/TVSum protocol sets it to roughly one candidate per two
+    seconds of video; capping it far below that produces shots too coarse for
+    the 15%-length knapsack to match a human summary.
     """
     n = features.shape[0]
     if n < 3:
@@ -107,7 +152,7 @@ def cpd_auto(
     if max_ncp < 1:
         return np.array([], dtype=np.int64)
 
-    K = gaussian_kernel(features)
+    K = linear_kernel(features) if kernel == "linear" else gaussian_kernel(features)
     I, prev = _dp(_segment_costs(K), n, max_ncp, lmin)
 
     ncps = np.arange(1, max_ncp + 1, dtype=np.float64)
