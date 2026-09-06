@@ -71,7 +71,7 @@ def build_highlight(
     cmd = [
         "ffmpeg", "-y", "-v", "error", "-i", str(video_path),
         "-vf", f"select='{vexpr}',setpts=N/FRAME_RATE/TB",
-        "-af", f"aselect='{vexpr}',asetpts=N/SR/STB",
+        "-af", f"aselect='{vexpr}',asetpts=N/SR/TB",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-c:a", "aac", "-movflags", "+faststart",
         str(out_path),
