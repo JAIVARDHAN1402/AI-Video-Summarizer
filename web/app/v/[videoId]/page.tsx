@@ -4,8 +4,20 @@ import { use, useEffect, useMemo, useState } from "react";
 import { api, humanDuration, type VideoResult } from "@/lib/api";
 import { SectionHead, Stamp, VideoPlayer } from "@/components/Bits";
 import { UnderstandingView } from "@/components/UnderstandingView";
+import { Markdown } from "@/components/Markdown";
 
 const TABS = ["Explanation", "Chapters", "Transcript", "Q&A", "Scenes", "Report"] as const;
+
+/** One exchange in the Q&A thread. */
+type Turn = {
+  q: string;
+  a: string;
+  confidence: string;
+  sources: { start: number; end: number; text: string }[];
+  beyondVideo?: boolean;
+  offTopic?: boolean;
+  error?: boolean;
+};
 type Tab = (typeof TABS)[number];
 
 export default function VideoPage({ params }: { params: Promise<{ videoId: string }> }) {
@@ -329,9 +341,7 @@ function AskBox({
 }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<
-    { q: string; a: string; confidence: string; sources: any[] }[]
-  >([]);
+  const [history, setHistory] = useState<Turn[]>([]);
 
   async function ask(e: React.FormEvent) {
     e.preventDefault();
@@ -340,12 +350,27 @@ function AskBox({
     setQ("");
     setBusy(true);
     try {
-      const r = await api.ask(videoId, question);
-      setHistory((h) => [...h, { q: question, a: r.answer, confidence: r.confidence, sources: r.sources }]);
+      // Send the conversation so far, so "explain that further" resolves
+      // against it instead of being read as a standalone question.
+      const prior = history
+        .filter((t) => !t.error)
+        .map(({ q, a }) => ({ q, a }));
+      const r = await api.ask(videoId, question, prior);
+      setHistory((h) => [
+        ...h,
+        {
+          q: question,
+          a: r.answer,
+          confidence: r.confidence,
+          sources: r.sources,
+          beyondVideo: r.beyond_video,
+          offTopic: r.off_topic,
+        },
+      ]);
     } catch (err: any) {
       setHistory((h) => [
         ...h,
-        { q: question, a: `Error: ${err.message}`, confidence: "low", sources: [] },
+        { q: question, a: `Error: ${err.message}`, confidence: "low", sources: [], error: true },
       ]);
     } finally {
       setBusy(false);
@@ -356,21 +381,28 @@ function AskBox({
     <div>
       {history.length === 0 && (
         <p className="prose-body mb-4 text-ink-muted">
-          Ask anything about the video. Every answer cites the timestamps it came from.
+          Ask anything about the video — follow-up questions work, and answers cite the
+          timestamps they came from. If the video doesn&apos;t cover it, you still get an
+          answer, marked as going beyond the video.
         </p>
       )}
       <div className="mb-4 flex flex-col gap-3">
         {history.map((h, i) => (
           <div key={i} className="rounded border border-border bg-surface p-4">
             <p className="mb-2 font-semibold text-ink">{h.q}</p>
-            <span
-              className={`mb-2 inline-block ${
-                h.confidence === "high" ? "pill pill-success" : "pill pill-warning"
-              }`}
-            >
-              {h.confidence} confidence
-            </span>
-            <p className="prose-body">{h.a}</p>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {h.offTopic ? (
+                <span className="pill pill-warning">not about this video</span>
+              ) : (
+                <span className={h.confidence === "high" ? "pill pill-success" : "pill pill-warning"}>
+                  {h.confidence} confidence
+                </span>
+              )}
+              {h.beyondVideo && !h.offTopic && (
+                <span className="pill pill-accent">goes beyond the video</span>
+              )}
+            </div>
+            {h.error ? <p className="prose-body text-danger">{h.a}</p> : <Markdown>{h.a}</Markdown>}
             {h.sources?.length > 0 && (
               <details className="mt-2">
                 <summary className="cursor-pointer text-[0.8rem] text-ink-dim">

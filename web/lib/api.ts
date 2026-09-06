@@ -69,6 +69,22 @@ export interface Understanding {
   };
 }
 
+/** One prior turn, sent back so follow-ups resolve against the conversation. */
+export interface AskTurn {
+  q: string;
+  a: string;
+}
+
+export interface AskAnswer {
+  answer: string;
+  confidence: string;
+  sources: { start: number; end: number; text: string }[];
+  /** The answer relies on knowledge the video did not cover. */
+  beyond_video: boolean;
+  /** The question is unrelated to this video's subject. */
+  off_topic: boolean;
+}
+
 export interface VideoResult {
   video_id: string;
   meta: Record<string, any>;
@@ -118,12 +134,12 @@ export const api = {
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),
 
-  ask: (videoId: string, question: string) =>
+  ask: (videoId: string, question: string, history: AskTurn[] = []) =>
     fetch(`/api/videos/${videoId}/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
-    }).then((r) => j<{ answer: string; confidence: string; sources: any[] }>(r)),
+      body: JSON.stringify({ question, history }),
+    }).then((r) => j<AskAnswer>(r)),
 
   schedulerClasses: () =>
     fetch("/api/scheduler/classes").then((r) => j<any[]>(r)),

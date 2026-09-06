@@ -2,6 +2,7 @@
 
 import type { Understanding } from "@/lib/api";
 import { CodeTabs, SectionHead, Stamp } from "./Bits";
+import { Markdown } from "./Markdown";
 
 /**
  * Renders the LLM understanding top to bottom: overview -> the section-by-
@@ -49,7 +50,7 @@ export function UnderstandingView({
                     </span>
                   )}
                 </div>
-                <p className="prose-body whitespace-pre-wrap">{b.body}</p>
+                <Markdown>{b.body}</Markdown>
               </div>
             ))}
           </div>
