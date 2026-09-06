@@ -58,17 +58,16 @@ def _run_epoch(model, loader, opt, device, train: bool):
     return total / max(len(loader.dataset), 1)
 
 
-def _eval_fold(model, shard_paths: list[Path], device) -> tuple[dict, list[dict]]:
+def _eval_fold(model, ds, device, with_f1: bool = True) -> tuple[dict, list[dict]]:
     import torch
 
     model.eval()
     rows: list[dict] = []
-    ds = mdata.ShardDataset(shard_paths)
     for i in range(len(ds)):
         x, y, meta = ds[i]
         with torch.no_grad():
             pred = model(x.unsqueeze(0).to(device)).squeeze(0).cpu().numpy()
-        rows.append(mev.evaluate_video(pred, meta, y.numpy()))
+        rows.append(mev.evaluate_video(pred, meta, y.numpy(), with_f1=with_f1))
     return mev.aggregate(rows), rows
 
 
@@ -88,9 +87,10 @@ def train_cv(
         val_idx = set(folds[fi])
         train_paths = [p for j, p in enumerate(shard_paths) if j not in val_idx]
         val_paths = [shard_paths[j] for j in folds[fi]]
+        train_ds = mdata.ShardDataset(train_paths)
+        val_ds = mdata.ShardDataset(val_paths)
         train_loader = DataLoader(
-            mdata.ShardDataset(train_paths), batch_size=batch_size, shuffle=True,
-            collate_fn=mdata.collate,
+            train_ds, batch_size=batch_size, shuffle=True, collate_fn=mdata.collate,
         )
 
         model = ImportanceScorer(ModelConfig(input_dim=input_dim)).to(device)
@@ -101,21 +101,22 @@ def train_cv(
         for ep in range(epochs):
             tr_loss = _run_epoch(model, train_loader, opt, device, train=True)
             sched.step()
-            agg, _ = _eval_fold(model, val_paths, device)
+            # Selection is on tau, so skip the knapsack F1 here — it is the
+            # expensive half of a validation pass and nothing reads it.
+            agg, _ = _eval_fold(model, val_ds, device, with_f1=False)
             metric = agg["kendall_tau"] or 0.0
             if metric > best_metric:
                 best_metric, best_state, since_best = metric, {k_: v.cpu().clone() for k_, v in model.state_dict().items()}, 0
             else:
                 since_best += 1
-            logger.info("fold %d ep %2d  loss %.4f  val tau %.4f  rho %.4f  f1 %s",
-                        fi, ep, tr_loss, agg["kendall_tau"], agg["spearman_rho"],
-                        f"{agg['f1']:.4f}" if agg["f1"] is not None else "n/a")
+            logger.info("fold %d ep %2d  loss %.4f  val tau %.4f  rho %.4f",
+                        fi, ep, tr_loss, agg["kendall_tau"], agg["spearman_rho"])
             if since_best >= patience:
                 logger.info("fold %d early stop at ep %d", fi, ep)
                 break
 
         model.load_state_dict(best_state)
-        agg, rows = _eval_fold(model, val_paths, device)
+        agg, rows = _eval_fold(model, val_ds, device, with_f1=True)
         model.save(CKPT_DIR / f"fold{fi}.pt")
         fold_reports.append({"fold": fi, "metrics": agg, "videos": rows})
         logger.info("fold %d DONE  tau %.4f  rho %.4f  f1 %s",

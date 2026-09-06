@@ -96,13 +96,19 @@ def rank_correlation(pred_scores: np.ndarray, mean_user_scores: np.ndarray) -> t
     return float(np.nan_to_num(tau)), float(np.nan_to_num(rho))
 
 
-def evaluate_video(pred_scores: np.ndarray, meta: dict, gt_scores: np.ndarray) -> dict:
+def evaluate_video(
+    pred_scores: np.ndarray, meta: dict, gt_scores: np.ndarray, with_f1: bool = True,
+) -> dict:
+    """``with_f1=False`` skips the knapsack summary, which runs once per
+    annotator (20 of them on TVSum) and dominates a per-epoch validation pass.
+    Early stopping selects on Kendall tau, so F1 is only needed for reporting.
+    """
     out = {"video_id": meta["video_id"], "dataset": meta["dataset"]}
     tau, rho = rank_correlation(pred_scores, gt_scores)
     out["kendall_tau"] = tau
     out["spearman_rho"] = rho
     us = meta.get("user_scores")
-    if us is not None:
+    if with_f1 and us is not None:
         out["f1"] = summary_f1(pred_scores, meta["change_points"], np.asarray(us), meta["dataset"])
     return out
 

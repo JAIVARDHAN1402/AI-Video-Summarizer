@@ -85,15 +85,25 @@ def prepare_shards(
 
 
 class ShardDataset:
-    """List of prepared shards -> (features, scores, meta) samples."""
+    """List of prepared shards -> (features, scores, meta) samples.
 
-    def __init__(self, shard_paths: list[Path]) -> None:
+    Shards are ``.npz`` and compressed, so decoding one is not free and the
+    training loop touches every shard once per epoch. The whole corpus is
+    ~150 MB decompressed, so it is held in memory after first read rather than
+    paying the decompression on every epoch.
+    """
+
+    def __init__(self, shard_paths: list[Path], cache: bool = True) -> None:
         self.paths = list(shard_paths)
+        self._cache: dict[int, tuple] = {} if cache else None
 
     def __len__(self) -> int:
         return len(self.paths)
 
     def __getitem__(self, i: int):
+        if self._cache is not None and i in self._cache:
+            return self._cache[i]
+
         import torch
 
         z = np.load(self.paths[i], allow_pickle=True)
@@ -106,7 +116,10 @@ class ShardDataset:
             "src_fps": float(z["src_fps"]),
             "user_scores": z["user_scores"] if "user_scores" in z.files else None,
         }
-        return x, y, meta
+        item = (x, y, meta)
+        if self._cache is not None:
+            self._cache[i] = item
+        return item
 
 
 def collate(batch):
