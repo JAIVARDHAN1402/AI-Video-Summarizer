@@ -25,14 +25,28 @@ behaves exactly as before.
 python scripts/fetch_datasets.py --root data/highlight
 ```
 
-SumMe downloads automatically (~2.2 GB). TVSum's archive is behind Google
-Drive — the script prints the steps; once the annotation files are in place,
-`--tvsum-videos` pulls the 50 clips with yt-dlp. Target layout:
+Both download automatically — SumMe ~2.2 GB from ETH Zurich, TVSum ~641 MB
+from the author's MIT page (videos included; the old Yahoo! Webscope and
+Google Drive routes are gone). Re-running is safe: anything already in place
+is skipped. Resulting layout:
 
 ```
-data/highlight/SumMe/GT/*.mat        data/highlight/SumMe/videos/*
+data/highlight/SumMe/GT/*.mat            data/highlight/SumMe/videos/*
 data/highlight/TVSum/ydata-tvsum50.mat   data/highlight/TVSum/video/*.mp4
 ```
+
+75 videos in total — 25 SumMe, 50 TVSum. Two notes:
+
+- TVSum's v1_1 `.mat` is MATLAB v7.3 (HDF5), which scipy cannot read. The
+  `.tsv` files beside it carry the same annotations and are used instead —
+  that is the normal path, not a fallback from an error.
+- `--tvsum-videos` is only needed if that archive ever ships without its
+  `video/` folder; it re-fetches the 50 clips with yt-dlp.
+
+`downloads/` keeps the raw archives (~6.6 GB) and can be deleted once the
+layout check passes. If the repo lives in a synced folder (OneDrive, Dropbox),
+exclude `data/` from sync — it is gitignored, but the sync client will still
+upload it and its file locks break the download's final rename.
 
 ## Train
 

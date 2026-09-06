@@ -5,13 +5,20 @@ Jaivardhan Singh (23BCI0036) · Sujay Chand (23BCE0217) · Harshit Raj (23BCE019
 Guide: Dr. Deepa K, SCOPE
 
 Given a video (YouTube URL or local upload), this system produces:
-- a timestamped, abstractive textual summary,
-- auto-generated chapters,
-- a searchable transcript, and
+- a **teachable explanation** — the video taught back section by section, not
+  just compressed, filling gaps the video leaves implicit,
+- for programming videos, the **algorithm plus working code** in Python, Java,
+  C++ and JavaScript,
+- the **on-screen material** — each slide, diagram or whiteboard as a keyframe
+  with its text extracted and explained,
+- auto-generated chapters, a searchable transcript, a glossary, and
 - a natural-language Q&A interface that answers with timestamp citations.
 
 Every transcript segment, scene, chapter, and Q&A answer carries `start`/`end`
 seconds — timestamps are the backbone of the whole pipeline.
+
+Two interfaces ship: a Streamlit app (`app.py`) and a production web tier — a
+FastAPI service (`server/`) behind a Next.js frontend (`web/`).
 
 ## Pipeline
 
@@ -30,12 +37,26 @@ M2 transcribe                              M3 vision
                            ▼
                   M4 fuse (align transcript to scenes)
                            ▼
-              M5 summarize (map-reduce, chapters)
+       M5′ understand (LLM: whole transcript + scenes + keyframes)
+           └─ falls back to M5 summarize (local map-reduce) with no API key
                            ▼
                M6 index (FAISS) ──► RAG Q&A
+                           ▼
+        M7 highlight (learned scene importance ──► highlight reel)
 ```
 
-M7 (auto-generated highlight video) is a stub — see [`core/highlight.py`](core/highlight.py).
+**M5′** ([`core/understand.py`](core/understand.py)) is what makes the output
+teachable. With `GEMINI_API_KEY` set it sends the entire transcript, the scene
+list, and the downscaled keyframes to `gemini-2.5-flash` in a single call — no
+chunking, and multimodal, so it reads diagrams and handwriting that OCR misses.
+The persona and output schema switch on the video type you pick. Without a key
+the pipeline falls back to the local BART/flan-t5 map-reduce.
+
+**M7** ([`ml/`](ml/README.md)) is a bi-GRU scene-importance model trained on
+SumMe + TVSum. When a checkpoint is present the vision stage attaches an
+`importance` score to every scene, which orders the keyframes sent to the LLM
+and drives the generated highlight reel. With no checkpoint the pipeline is
+unchanged.
 
 ## Designed around a time budget
 
@@ -217,6 +238,33 @@ Paste a URL or upload a file, pick a processing profile, and click
 **Summarize video**. Results open across six tabs — Summary, Chapters,
 Transcript, Q&A, Scenes, and Report — with Markdown, SRT, and JSON export.
 
+### Run the production web tier
+
+```bash
+pip install -r requirements-server.txt
+python -m server.main              # FastAPI on :8000  (/docs for the API)
+
+cd web && npm install && npm run dev   # Next.js on :3000, proxies /api/*
+```
+
+The frontend carries the same result surface as the Streamlit app plus live
+job progress, a library of past runs with per-job **Stop**, file uploads, and a
+light/dark/system theme switcher. Auth is off by default — set `VS_API_KEYS`
+or `VS_JWT_SECRET` to require a bearer token. See [`server/README.md`](server/README.md).
+
+### Run a distributed worker fleet
+
+The scheduler ([`server/scheduler.py`](server/scheduler.py)) routes each job to
+the cheapest worker class predicted to meet its wall-clock SLA, keeps a learned
+cost model per hardware class, and records predicted-vs-actual-vs-baseline for
+every run. Three ways to give it more than one class — in-process, Redis + RQ
+workers, or `docker compose up` for two CPU-limited containers:
+
+```bash
+docker compose up --build
+python scripts/fleet_demo.py --api http://localhost:8000 --repeat 8
+```
+
 ### Run headlessly (CLI)
 
 ```bash
@@ -269,14 +317,32 @@ core/
 ├── vision.py      # M3 — segmentation, keyframes, YOLO, CLIP, OCR
 ├── fuse.py        # M4 — align transcript to scenes
 ├── summarize.py   # M5 — map-reduce summary + chapters
+├── understand.py  # M5′ — LLM teachable explanation (+ llm.py, Gemini client)
 ├── qa.py          # M6 — FAISS retrieval + flan-t5/Gemini generation
-├── highlight.py   # M7 — stub, future scope
-├── pipeline.py    # orchestrator (M1→M6) + UI façade
+├── highlight.py   # M7 — highlight reel from learned scene importance
+├── warm.py        # background model preload
+├── pipeline.py    # orchestrator (M1→M7) + UI façade
 └── cache.py       # cache dir, job state, JSON read/write
-ui/
+ui/                # Streamlit presentation only
 ├── theme.py       # design tokens and CSS
 ├── components.py  # reusable render functions
 └── format.py      # formatting + Markdown/SRT/JSON export
+server/            # FastAPI tier
+├── app.py         # jobs, SSE progress, results, Q&A, uploads, scheduler routes
+├── scheduler.py   # SLA-constrained routing + per-class cost calibration
+├── jobs.py        # job lifecycle, local fleet / RQ queue, cancellation
+├── worker.py      # RQ worker entrypoint (Windows-safe)
+├── db.py          # SQLAlchemy models (SQLite → Postgres by URL)
+└── storage.py     # local disk / S3 seam
+web/               # Next.js 15 frontend (App Router, Tailwind)
+ml/                # M7 — SumMe/TVSum importance model
+├── datasets.py    # SumMe + TVSum loaders
+├── features.py    # video → sampled CLIP sequence
+├── kts.py         # Kernel Temporal Segmentation
+├── model.py       # BiGRU scorer
+├── train.py       # 5-fold cross-validation
+├── evaluate.py    # knapsack F1 + Kendall/Spearman
+└── infer.py       # runtime scoring
 ```
 
 ## Known limitations
@@ -296,11 +362,20 @@ ui/
   old `yt-dlp` pin is the most common cause of "Please sign in" errors; run
   `pip install --upgrade yt-dlp` first. For age-restricted or region-locked
   videos, set `YT_DLP_COOKIES_FROM_BROWSER` in `.env`.
-- **Highlight video generation (M7)** is out of scope for this prototype —
-  see [`core/highlight.py`](core/highlight.py).
-- Real-time/live processing, speaker diarization, emotion/action recognition,
-  multi-user auth, and cloud deployment are explicitly out of scope (see the
-  project abstract).
+- **M7 needs a trained checkpoint.** The code and datasets are in place, but
+  until `python -m ml.train --prepare --data-root data/highlight` produces
+  `ml/checkpoints/importance.pt`, scene importance and the highlight reel stay
+  off and the pipeline behaves exactly as before.
+- **Scene importance is scored on keyframe embeddings**, a shorter and sparser
+  sequence than the 2 fps training data. Treat it as a relative ranking over
+  scenes, not a calibrated per-frame score.
+- **Cancelling a job lands at the next stage boundary**, not instantly — the
+  row flips immediately, but a long download or transcription finishes first.
+- **The in-process worker fleet serialises the pipeline** (one heavy run at a
+  time per process, since the warmed models are shared). Real parallelism needs
+  separate worker processes: `VS_QUEUE_BACKEND=redis` or docker-compose.
+- Real-time/live processing, speaker diarization, and emotion/action
+  recognition are out of scope (see the project abstract).
 - Static, single-shot recordings produce very few content-based scene cuts;
   `core/vision.py` falls back to fixed 60-second intervals when fewer than 2
   scenes are found.
