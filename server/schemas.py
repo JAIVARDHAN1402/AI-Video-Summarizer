@@ -78,14 +78,24 @@ class JobView(BaseModel):
     finished_at: Optional[str] = None
 
 
+class AskTurn(BaseModel):
+    q: str
+    a: str
+
+
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
+    # Prior turns, so a follow-up ("explain that further") resolves against the
+    # conversation instead of being read as a standalone question.
+    history: list[AskTurn] = Field(default_factory=list)
 
 
 class AskResponse(BaseModel):
     answer: str
     confidence: str
     sources: list[dict[str, Any]]
+    beyond_video: bool = False
+    off_topic: bool = False
 
 
 class VideoResult(BaseModel):

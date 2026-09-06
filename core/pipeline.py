@@ -311,7 +311,8 @@ def process(
 # exposed here as a thin wrapper.
 
 
-def answer_question(video_id: str, question: str) -> dict[str, Any]:
+def answer_question(video_id: str, question: str,
+                    history: Optional[list[dict[str, str]]] = None) -> dict[str, Any]:
     """Answer a question about an already-processed video (see core.qa.answer).
 
     build_index() is idempotent (it no-ops when a cached index exists), so
@@ -320,7 +321,7 @@ def answer_question(video_id: str, question: str) -> dict[str, Any]:
     "no index" error to the UI.
     """
     qa.build_index(video_id)
-    return qa.answer(video_id, question)
+    return qa.answer(video_id, question, history)
 
 
 def preview_source(source_ref: str, is_upload: bool = False) -> dict[str, Any]:

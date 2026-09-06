@@ -291,6 +291,20 @@ QA_MIN_REAL_WORDS = 4
 # truncate them anyway.
 QA_GENERATION_CHUNKS = 3
 QA_CONTEXT_MAX_TOKENS = 380
+
+# --- Q&A with a capable model ------------------------------------------------
+# The two settings above exist to fit flan-t5-base's 512-token encoder. A real
+# model has no such constraint, and giving it the same cramped context is why
+# its answers came back as short as the local model's. When GEMINI_API_KEY is
+# set the tutor path uses these instead, and also gets the understanding
+# document (explanation, glossary, code) alongside the raw transcript.
+QA_LLM_CONTEXT_CHUNKS = int(os.getenv("VS_QA_CHUNKS", "10"))
+QA_LLM_CONTEXT_MAX_TOKENS = int(os.getenv("VS_QA_CONTEXT_TOKENS", "12000"))
+QA_LLM_MAX_OUTPUT_TOKENS = int(os.getenv("VS_QA_MAX_TOKENS", "2048"))
+QA_LLM_THINKING_BUDGET = int(os.getenv("VS_QA_THINKING", "0"))
+QA_HISTORY_TURNS = int(os.getenv("VS_QA_HISTORY_TURNS", "6"))
+# Sections of the understanding doc to offer as context, most relevant first.
+QA_UNDERSTANDING_SECTIONS = int(os.getenv("VS_QA_UNDERSTANDING_SECTIONS", "6"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 USE_GEMINI = GEMINI_API_KEY is not None
 GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backend (core/qa.py)
@@ -304,7 +318,16 @@ GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backen
 # specific dated version via VS_UNDERSTANDING_MODEL for reproducibility.
 UNDERSTANDING_MODEL = os.getenv("VS_UNDERSTANDING_MODEL", "gemini-2.5-flash")
 UNDERSTANDING_TEMPERATURE = float(os.getenv("VS_UNDERSTANDING_TEMPERATURE", "0.35"))
-UNDERSTANDING_MAX_OUTPUT_TOKENS = int(os.getenv("VS_UNDERSTANDING_MAX_TOKENS", "16384"))
+UNDERSTANDING_MAX_OUTPUT_TOKENS = int(os.getenv("VS_UNDERSTANDING_MAX_TOKENS", "32768"))
+
+# One output budget has to cover the whole video, so past a certain length the
+# explanation thins out no matter how large that budget is: a 3-hour video gets
+# the same tokens as a 10-minute one. Beyond SINGLE_PASS_MAX_MIN the video is
+# understood in windows instead — each window gets the full budget, and a final
+# pass writes the overview, recap, key points and glossary across them. Cost is
+# one call per window plus the reduce.
+UNDERSTANDING_SINGLE_PASS_MAX_MIN = float(os.getenv("VS_UNDERSTANDING_SINGLE_PASS_MIN", "45"))
+UNDERSTANDING_WINDOW_MIN = float(os.getenv("VS_UNDERSTANDING_WINDOW_MIN", "25"))
 # Reasoning-model thinking budget (output tokens spent planning before the
 # visible reply). 0 = answer directly (fastest, cheapest); higher can help
 # on coding videos where the model benefits from reasoning through the code.

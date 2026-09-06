@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from enum import Enum
 from typing import Any, Optional
@@ -230,6 +231,27 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
+def _subschema(*keys: str, required: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {k: _SCHEMA["properties"][k] for k in keys},
+        "required": list(required),
+    }
+
+
+# A window is only asked for the parts that are local to it. The overview,
+# recap, key points and glossary describe the whole video and are written once,
+# by the reduce pass, from every window's output.
+_WINDOW_SCHEMA = _subschema(
+    "explanation", "chapters", "scene_notes",
+    required=("explanation", "chapters"),
+)
+_REDUCE_SCHEMA = _subschema(
+    "overview", "summary", "key_points", "glossary", "coding", "meeting",
+    required=("overview", "summary", "key_points"),
+)
+
+
 # --- Context assembly ------------------------------------------------------------
 
 
@@ -248,7 +270,11 @@ def _format_transcript(segments: list[dict[str, Any]]) -> str:
     for seg in segments:
         text = seg.get("text", "").strip()
         if text:
-            lines.append(f"[{_mmss(seg['start'])}] {text}")
+            # Both forms, because the schema asks for seconds while MM:SS is
+            # what reads naturally. Given only "[74:12]" the model returns 74 —
+            # the minutes — so every section on a 76-minute video landed inside
+            # its first 80 seconds. The bare number removes the conversion.
+            lines.append(f"[{_mmss(seg['start'])} | {int(seg['start'])}s] {text}")
     return "\n".join(lines)
 
 
@@ -362,8 +388,11 @@ def _build_prompt(
         "=== TASK ===",
         "Produce the JSON described by the schema. The 'explanation' array is the "
         "most important field: it must be a complete, self-contained teaching of "
-        "the material. Anchor every section and chapter to a transcript timestamp "
-        "(start_sec) — use DISTINCT timestamps, not the same one repeated. "
+        "the material. Anchor every section and chapter to a transcript timestamp: "
+        "'start_sec' is a number of SECONDS, and must be copied from the '<n>s' "
+        "value shown in the transcript line you are anchoring to — not the MM:SS "
+        "form, and not the minutes. Use DISTINCT timestamps, not the same one "
+        "repeated, and let them span the whole part you were given. "
         "Populate 'scene_notes' ONLY for scenes that show a slide, diagram, board, "
         "code editor, or document — skip plain talking-head or webcam shots. "
         "Keyframe images for the more informative scenes are attached below; use "
@@ -379,6 +408,137 @@ def _build_prompt(
         header.append("This is a meeting: also fill 'meeting' with decisions and action items.")
 
     return "\n".join(header)
+
+
+# --- Windowed understanding (long videos) ----------------------------------------
+
+
+def _windows(duration_sec: float, window_min: float) -> list[tuple[float, float]]:
+    """Split a duration into near-equal windows of at most ``window_min``.
+
+    Equal-sized rather than fixed-length so the last window is never a stub:
+    a 70-minute video at a 25-minute target becomes 3 x 23.3, not 25/25/20.
+    """
+    window_sec = max(window_min * 60.0, 60.0)
+    count = max(int(math.ceil(duration_sec / window_sec)), 1)
+    step = duration_sec / count
+    return [(i * step, (i + 1) * step if i < count - 1 else duration_sec)
+            for i in range(count)]
+
+
+def _slice_transcript(transcript: dict[str, Any], start: float, end: float) -> dict[str, Any]:
+    segs = [s for s in (transcript.get("segments") or [])
+            if s.get("end", s.get("start", 0)) > start and s.get("start", 0) < end]
+    return {**transcript, "segments": segs}
+
+
+def _slice_scenes(scenes_data: Optional[dict[str, Any]], start: float,
+                  end: float) -> Optional[dict[str, Any]]:
+    if not scenes_data:
+        return None
+    kept = [s for s in (scenes_data.get("scenes") or [])
+            if s.get("end", s.get("start", 0)) > start and s.get("start", 0) < end]
+    return {**scenes_data, "scenes": kept}
+
+
+def _generate_windowed(
+    client, video_id: str, meta: dict[str, Any], transcript: dict[str, Any],
+    scenes_data: Optional[dict[str, Any]], vtype: VideoType, topic: str,
+    thinking: int,
+) -> tuple[dict[str, Any], str]:
+    """Understand a long video window by window, then reduce.
+
+    Each window is a full-budget call over just its own transcript and scenes,
+    so the explanation stays as dense at three hours as it is at ten minutes.
+    """
+    duration = float(meta.get("duration_sec") or 0.0)
+    bounds = _windows(duration, config.UNDERSTANDING_WINDOW_MIN)
+    persona = _PERSONA_BY_TYPE[vtype]
+    logger.info("%s: %.0f min -> %d windows of ~%.0f min",
+                video_id, duration / 60, len(bounds), (duration / len(bounds)) / 60)
+
+    explanation: list[dict[str, Any]] = []
+    chapters: list[dict[str, Any]] = []
+    scene_notes: list[dict[str, Any]] = []
+    model = client.model
+
+    for i, (start, end) in enumerate(bounds, 1):
+        cache.set_state(
+            video_id, "summarize", 0.2 + 0.6 * (i - 1) / len(bounds),
+            f"Understanding part {i} of {len(bounds)} ({client.model})...",
+        )
+        w_transcript = _slice_transcript(transcript, start, end)
+        w_scenes = _slice_scenes(scenes_data, start, end)
+        w_meta = {**meta, "duration_sec": end - start}
+        prompt = _build_prompt(w_meta, w_transcript, w_scenes, vtype, topic)
+        prompt += (
+            f"\n\nThis is PART {i} OF {len(bounds)} of a longer video, covering "
+            f"{_mmss(start)}-{_mmss(end)}. Explain only this part, in the same depth "
+            f"you would give a standalone video. Timestamps are absolute — use them "
+            f"as they appear in the transcript. Do not write an overall introduction "
+            f"or conclusion for the whole video; that is written separately."
+        )
+        images = (
+            _select_scene_images((w_scenes or {}).get("scenes") or [],
+                                 config.UNDERSTANDING_MAX_SCENE_IMAGES)
+            if config.UNDERSTANDING_SEND_SCENE_IMAGES else []
+        )
+        result = client.generate_json(
+            persona, prompt,
+            schema=_WINDOW_SCHEMA,
+            temperature=config.UNDERSTANDING_TEMPERATURE,
+            max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
+            thinking_budget=thinking,
+            images=images,
+        )
+        model = result.model
+        part = result.data or {}
+        explanation += part.get("explanation") or []
+        chapters += part.get("chapters") or []
+        scene_notes += part.get("scene_notes") or []
+        logger.info("  part %d/%d: %d sections", i, len(bounds),
+                    len(part.get("explanation") or []))
+
+    cache.set_state(video_id, "summarize", 0.85, "Writing the overall summary...")
+    digest = "\n".join(
+        f"[{_mmss(b.get('start_sec', 0))}] {b.get('heading', '')}: {b.get('body', '')}"
+        for b in explanation
+    )
+    reduce_prompt = (
+        f"VIDEO TITLE: {meta.get('title', 'Untitled')}\n"
+        f"VIDEO TYPE: {vtype.value}\n"
+        f"STATED TOPIC: {topic or '(not given)'}\n"
+        f"DURATION: {duration / 60:.0f} minutes\n\n"
+        "The video was explained in parts; below is the full section-by-section "
+        "explanation that was produced.\n\n"
+        "=== SECTIONS ===\n" + digest + "\n\n"
+        "=== TASK ===\nWrite the material that describes the video as a whole: an "
+        "'overview', a tight 'summary' recap, the 'key_points', and a 'glossary' of "
+        "terms a reader would need. Do not repeat the sections themselves."
+    )
+    if vtype is VideoType.CODING:
+        reduce_prompt += (
+            " This is a coding video: also fill 'coding' with the algorithm, complexity, "
+            "and working Python / Java / C++ / JavaScript implementations."
+        )
+    if vtype is VideoType.MEETING:
+        reduce_prompt += " This is a meeting: also fill 'meeting' with decisions and action items."
+
+    reduced = client.generate_json(
+        _PERSONA_BY_TYPE[vtype], reduce_prompt,
+        schema=_REDUCE_SCHEMA,
+        temperature=config.UNDERSTANDING_TEMPERATURE,
+        max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
+        thinking_budget=thinking,
+    )
+    data = {
+        **(reduced.data or {}),
+        "explanation": explanation,
+        "chapters": chapters,
+        "scene_notes": scene_notes,
+        "windows": len(bounds),
+    }
+    return data, (reduced.model or model)
 
 
 # --- Public API ------------------------------------------------------------------
@@ -436,35 +596,49 @@ def generate(
         else []
     )
 
-    cache.set_state(video_id, "summarize", 0.2, f"Understanding the video ({client.model})...")
     started = time.perf_counter()
     thinking = (
         config.UNDERSTANDING_THINKING_BUDGET_CODING
         if vtype is VideoType.CODING
         else config.UNDERSTANDING_THINKING_BUDGET
     )
-    result = client.generate_json(
-        persona, prompt,
-        schema=_SCHEMA,
-        temperature=config.UNDERSTANDING_TEMPERATURE,
-        max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
-        thinking_budget=thinking,
-        images=images,
-    )
+    duration_min = float(meta.get("duration_sec") or 0.0) / 60.0
+    windowed = duration_min > config.UNDERSTANDING_SINGLE_PASS_MAX_MIN
+
+    if windowed:
+        raw, model = _generate_windowed(
+            client, video_id, meta, transcript, scenes_data, vtype, topic, thinking,
+        )
+        truncated, finish_reason = False, None
+    else:
+        cache.set_state(video_id, "summarize", 0.2,
+                        f"Understanding the video ({client.model})...")
+        result = client.generate_json(
+            persona, prompt,
+            schema=_SCHEMA,
+            temperature=config.UNDERSTANDING_TEMPERATURE,
+            max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
+            thinking_budget=thinking,
+            images=images,
+        )
+        raw, model = result.data, result.model
+        truncated, finish_reason = result.truncated_input, result.finish_reason
+
     elapsed = time.perf_counter() - started
     perf.record_observation(
         "understand:per_min",
         elapsed / max(meta.get("duration_sec", 60) / 60, 1),
     )
 
-    data = _normalise(result.data, transcript, scenes_data)
+    data = _normalise(raw, transcript, scenes_data)
     understanding = {
         "video_type": vtype.value,
         "topic": topic,
-        "model": result.model,
+        "model": model,
         "generated_in_sec": round(elapsed, 1),
-        "input_truncated": result.truncated_input,
-        "finish_reason": result.finish_reason,
+        "input_truncated": truncated,
+        "finish_reason": finish_reason,
+        "windows": raw.get("windows", 1),
         **data,
     }
     cache.write_json(video_id, "understanding", understanding)

@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 import config
-from core import cache
+from core import cache, llm
 
 logger = logging.getLogger(__name__)
 
@@ -333,15 +333,152 @@ def _generate(prompt: str) -> str:
 # --- Public API ------------------------------------------------------------------------
 
 
-def answer(video_id: str, question: str) -> dict[str, Any]:
+# --- Tutor path (capable model) --------------------------------------------------
+
+_TUTOR_PERSONA = """You are a patient, expert tutor answering questions about a video \
+the reader has not watched. You are given passages from its transcript and the \
+structured explanation already written for it.
+
+How to answer:
+- Answer the actual question directly, first. Then explain as much as it takes for the \
+reader to genuinely understand — a sentence when that is enough, several paragraphs when \
+it is not. Never pad.
+- The video's material is your primary source. Where the video covers the answer, ground \
+your explanation in it and cite the timestamps you used.
+- Where the video is incomplete, wrong, or silent, you may complete the answer from \
+standard knowledge — that is what a tutor does. But say so: set "beyond_video" to true \
+and make clear in the answer which part the video did not cover.
+- If the question has nothing to do with this video's subject at all, say so plainly \
+instead of inventing a connection.
+- Write plain prose with short paragraphs. Use a fenced code block for code. No preamble \
+like "Based on the transcript".
+- Follow-up questions refer to the conversation so far; read it before answering."""
+
+_TUTOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string", "description": "The full answer, in markdown."},
+        "beyond_video": {
+            "type": "boolean",
+            "description": "true if the answer relies on knowledge the video did not cover.",
+        },
+        "cited_sec": {
+            "type": "array",
+            "description": "Start times (seconds) of the passages actually used.",
+            "items": {"type": "number"},
+        },
+        "off_topic": {
+            "type": "boolean",
+            "description": "true if the question is unrelated to this video's subject.",
+        },
+    },
+    "required": ["answer", "beyond_video", "off_topic"],
+}
+
+
+def _understanding_context(video_id: str, question: str) -> str:
+    """The explanation, glossary and code already written for this video.
+
+    Retrieval over raw transcript chunks returns spoken fragments; the
+    understanding document holds the same material already organised and
+    corrected. Offering both lets the tutor answer from the clean version and
+    still cite the moment in the video it came from.
+    """
+    u = cache.read_json(video_id, "understanding")
+    if not u:
+        return ""
+    parts: list[str] = []
+    if u.get("overview"):
+        parts.append(f"OVERVIEW: {u['overview']}")
+
+    sections = u.get("explanation") or []
+    if sections:
+        try:
+            q_vec = _embed_texts([question])
+            sec_vecs = _embed_texts([f"{s.get('heading','')} {s.get('body','')}" for s in sections])
+            order = np.argsort(-(sec_vecs @ q_vec[0]))[: config.QA_UNDERSTANDING_SECTIONS]
+        except Exception:
+            order = range(min(len(sections), config.QA_UNDERSTANDING_SECTIONS))
+        parts.append("RELEVANT SECTIONS OF THE WRITTEN EXPLANATION:")
+        for i in order:
+            s = sections[int(i)]
+            parts.append(f"[{_format_mmss(s.get('start_sec', 0))}] {s.get('heading','')}\n"
+                         f"{s.get('body','')}")
+
+    if u.get("glossary"):
+        parts.append("GLOSSARY: " + "; ".join(
+            f"{g.get('term')} = {g.get('definition')}" for g in u["glossary"]))
+    coding = u.get("coding") or {}
+    if coding.get("implementations"):
+        impl = coding["implementations"][0]
+        parts.append(f"REFERENCE IMPLEMENTATION ({impl.get('language')}):\n{impl.get('code','')}")
+    return "\n\n".join(parts)
+
+
+def _answer_with_llm(
+    video_id: str, question: str, retrieved: list[dict[str, Any]],
+    history: list[dict[str, str]] | None,
+) -> dict[str, Any]:
+    encoding = _get_tiktoken_encoding()
+    budget = config.QA_LLM_CONTEXT_MAX_TOKENS
+    passages: list[str] = []
+    for chunk in retrieved[: config.QA_LLM_CONTEXT_CHUNKS]:
+        text = chunk["text"].strip()
+        tokens = encoding.encode(text)
+        if len(tokens) > budget:
+            text = encoding.decode(tokens[:budget])
+        passages.append(f"[{_format_mmss(chunk['start'])}] {text}")
+        budget -= min(len(tokens), budget)
+        if budget <= 0:
+            break
+
+    blocks = []
+    written = _understanding_context(video_id, question)
+    if written:
+        blocks.append("=== WRITTEN EXPLANATION OF THIS VIDEO ===\n" + written)
+    if passages:
+        blocks.append("=== TRANSCRIPT PASSAGES (timestamped) ===\n" + "\n\n".join(passages))
+    for turn in (history or [])[-config.QA_HISTORY_TURNS:]:
+        blocks.append(f"EARLIER — Q: {turn.get('q','')}\nA: {turn.get('a','')}")
+    blocks.append(f"=== QUESTION ===\n{question}")
+
+    result = llm.get_client().generate_json(
+        _TUTOR_PERSONA, "\n\n".join(blocks),
+        schema=_TUTOR_SCHEMA,
+        temperature=0.3,
+        max_output_tokens=config.QA_LLM_MAX_OUTPUT_TOKENS,
+        thinking_budget=config.QA_LLM_THINKING_BUDGET,
+    )
+    data = result.data or {}
+    text = (data.get("answer") or "").strip()
+    if not text:
+        raise llm.LLMError("empty answer")
+
+    cited = set(float(s) for s in (data.get("cited_sec") or []))
+    used = [c for c in retrieved if any(abs(c["start"] - s) < 30 for s in cited)] or retrieved
+    return {
+        "answer": text,
+        "sources": [{"start": c["start"], "end": c["end"], "text": c["text"]} for c in used],
+        "confidence": "low" if data.get("off_topic") else "high",
+        "beyond_video": bool(data.get("beyond_video")),
+        "off_topic": bool(data.get("off_topic")),
+    }
+
+
+def answer(
+    video_id: str, question: str, history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     """Answer a natural-language question about the video, with timestamp citations.
 
     Args:
         video_id: The cache key for this video (build_index() must have run).
         question: The user's natural-language question.
+        history: Prior turns as ``[{"q": ..., "a": ...}]`` so follow-ups
+            ("explain that further") resolve against the conversation.
 
     Returns:
-        {"answer": str, "sources": [{"start","end","text"}, ...], "confidence": "high"|"low"}
+        {"answer", "sources", "confidence", and — on the tutor path —
+        "beyond_video" and "off_topic"}
     """
     retrieved, scores = _retrieve(video_id, question)
     not_discussed = {
@@ -349,15 +486,27 @@ def answer(video_id: str, question: str) -> dict[str, Any]:
         "sources": [],
         "confidence": "low",
     }
+
+    # With a capable model, retrieval is context rather than a gate. A thin
+    # match usually means the wording differs or the question spans the whole
+    # video, not that it is unanswerable — and the model can say so itself,
+    # which the local path cannot be trusted to do.
+    if llm.get_client().available:
+        try:
+            return _answer_with_llm(video_id, question, retrieved, history)
+        except llm.LLMError:
+            logger.warning("tutor answer failed; falling back to the local model",
+                           exc_info=True)
+
     if not retrieved:
         return not_discussed
 
-    # When retrieval finds nothing related, do not generate at all. Asked for
-    # an answer that is not in its context, a small instruction model invents
-    # a fluent one — "what is the capital of France?" against a coding lecture
-    # produced a confident string of invented place names. Refusing to
-    # generate is both more honest and the only behaviour consistent with a
-    # product whose answers are supposed to be grounded in cited passages.
+    # Without one, do not generate when retrieval finds nothing related. Asked
+    # for an answer that is not in its context, a small instruction model
+    # invents a fluent one — "what is the capital of France?" against a coding
+    # lecture produced a confident string of invented place names. Refusing is
+    # both more honest and the only behaviour consistent with a product whose
+    # answers are supposed to be grounded in cited passages.
     top_score = scores[0]
     if top_score < config.RAG_LOW_CONFIDENCE_THRESHOLD:
         return not_discussed

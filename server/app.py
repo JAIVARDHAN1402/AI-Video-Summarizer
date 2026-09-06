@@ -261,11 +261,16 @@ def ask(video_id: str, req: schemas.AskRequest) -> schemas.AskResponse:
 
     if pipeline.get_meta(video_id) is None:
         raise HTTPException(404, "video not found")
-    result = pipeline.answer_question(video_id, req.question.strip())
+    result = pipeline.answer_question(
+        video_id, req.question.strip(),
+        [{"q": t.q, "a": t.a} for t in req.history],
+    )
     return schemas.AskResponse(
         answer=result["answer"],
         confidence=result.get("confidence", "low"),
         sources=result.get("sources", []),
+        beyond_video=bool(result.get("beyond_video")),
+        off_topic=bool(result.get("off_topic")),
     )
 
 
