@@ -15,9 +15,42 @@ behaves exactly as before.
 | Features | CLIP ViT-B/32 image embeddings (the same model `core/vision.py` loads), frames sampled at 2 fps, L2-normalised |
 | Model | 1-layer bi-GRU (hidden 128) + 2-layer MLP head → per-frame score in [0, 1]. ~0.5M params, CPU inference in ms |
 | Loss | masked MSE on min-max-normalised human importance + a pairwise ranking hinge |
-| Segmentation | Kernel Temporal Segmentation (`kts.py`) — the standard shot boundaries for the F1 metric |
-| Metrics | knapsack-summary **F1** (max-over-users for SumMe, mean for TVSum) and **Kendall τ / Spearman ρ** vs. mean human scores (Otani et al., CVPR 2019) |
-| Protocol | 5-fold video-disjoint cross-validation |
+| Segmentation | Kernel Temporal Segmentation (`kts.py`), cut to ~one shot per 2s — the granularity the shot-level F1 assumes |
+| Metrics | knapsack-summary **F1** (max-over-users for SumMe, mean for TVSum), and **Kendall τ / Spearman ρ** against each annotator separately, averaged (Otani et al., CVPR 2019) |
+| Protocol | 5-fold video-disjoint cross-validation; early stopping on validation τ |
+
+## Reading the numbers
+
+**Do not compare our absolute F1 to published SumMe/TVSum numbers.** F1 here
+depends on the feature extractor, the frame sampling rate and the shot
+segmentation, and all three differ from the published setups (GoogleNet pool5,
+their KTS, their sampling). A paper's figures — including its *random*
+baseline — are not on this scale in either direction.
+
+What is meaningful is where the model sits against baselines measured on the
+same shards:
+
+```bash
+python -m ml.evaluate --checkpoint ml/checkpoints/importance.pt --baselines
+```
+
+| dataset | random | human (leave-one-out) | oracle (mean score) |
+| --- | --- | --- | --- |
+| SumMe | 0.3684 | 0.6120 | 0.7826 |
+| TVSum | 0.1657 | 0.2602 | 0.4058 |
+
+*random* is uniform noise as frame scores; *human* scores each annotator
+against the **others**, so nobody is compared to themselves — the realistic
+ceiling on a subjective task; *oracle* is the averaged annotator score, i.e.
+the model's own training target and so the bound this architecture works
+toward.
+
+Two rank correlations are reported. `kendall_tau` / `spearman_rho` correlate
+the prediction with **each annotator separately** and average — the comparable
+metric, and a hard one (human-vs-human agreement on TVSum is only ~0.18 τ).
+`kendall_tau_vs_mean` correlates against the *averaged* annotator score, which
+is the training target: much easier, useful for early stopping, and not
+comparable to anything published.
 
 ## Get the data
 
