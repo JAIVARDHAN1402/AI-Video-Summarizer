@@ -55,6 +55,40 @@ def _get(api: str, path: str) -> dict:
         return json.loads(r.read())
 
 
+def _upload(api: str, path: str) -> str:
+    """POST a local video to /api/uploads, return its upload_id.
+
+    Local files make better fleet evidence than URLs: no download variance in
+    the measured wall-clock, and each file lands in its own cache entry so
+    workers never contend over one video's artifacts.
+    """
+    import mimetypes
+    import os
+    import uuid
+
+    boundary = uuid.uuid4().hex
+    name = os.path.basename(path)
+    ctype = mimetypes.guess_type(name)[0] or "video/mp4"
+    with open(path, "rb") as fh:
+        payload = fh.read()
+
+    body = b"".join([
+        f"--{boundary}\r\n".encode(),
+        f'Content-Disposition: form-data; name="file"; filename="{name}"\r\n'.encode(),
+        f"Content-Type: {ctype}\r\n\r\n".encode(),
+        payload,
+        f"\r\n--{boundary}--\r\n".encode(),
+    ])
+    req = urllib.request.Request(
+        api.rstrip("/") + "/api/uploads",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return json.loads(r.read())["upload_id"]
+
+
 def _wait(api: str, job_id: str, poll: float, timeout: float) -> dict:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -69,6 +103,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--api", default=os.getenv("VS_API", "http://localhost:8000"))
     ap.add_argument("--url", action="append", default=[], help="video URL (repeatable)")
+    ap.add_argument("--file", action="append", default=[],
+                    help="local video to upload instead of a URL (repeatable); avoids download variance in the measured wall-clock")
     ap.add_argument("--video-type", default="coding")
     ap.add_argument("--topic", default="")
     ap.add_argument("--profile", default="fast", choices=["fast", "balanced", "accurate"])
@@ -79,11 +115,13 @@ def main() -> int:
                          "before the real routing phase")
     ap.add_argument("--repeat", type=int, default=6, help="jobs to submit (cycling the URLs)")
     ap.add_argument("--serial", action="store_true", help="wait for each job before submitting the next")
+    ap.add_argument("--force", action="store_true",
+                    help="re-run every stage instead of reusing cached artifacts; required for timing evidence, since a cached run does no work. Safe with --serial only.")
     ap.add_argument("--poll", type=float, default=3.0)
     ap.add_argument("--timeout", type=float, default=1800.0)
     args = ap.parse_args()
 
-    urls = args.url or DEFAULT_URLS
+    sources = args.file or args.url or DEFAULT_URLS
 
     try:
         health = _get(args.api, "/api/health")
@@ -96,12 +134,12 @@ def main() -> int:
     if args.calibrate:
         print(f"calibration phase — {args.calibrate} jobs at a loose {loose_sla:.0f}s SLA "
               f"so every class gets measured:")
-        _run_phase(args, urls, args.calibrate, loose_sla)
+        _run_phase(args, sources, args.calibrate, loose_sla)
         print()
 
     print(f"routing phase — {args.repeat} jobs at the target "
           f"{args.sla or 'profile-default'} SLA:")
-    _run_phase(args, urls, args.repeat, args.sla)
+    _run_phase(args, sources, args.repeat, args.sla)
 
     print("\n" + "=" * 68)
     _print_stats(_get(args.api, "/api/scheduler/sla"))
@@ -112,13 +150,20 @@ def main() -> int:
     return 0
 
 
-def _run_phase(args, urls: list[str], count: int, sla: float | None) -> None:
+def _run_phase(args, sources: list[str], count: int, sla: float | None) -> None:
     submitted: list[str] = []
     for i in range(count):
+        src = sources[i % len(sources)]
         body = {
-            "url": urls[i % len(urls)], "video_type": args.video_type,
-            "topic": args.topic, "profile": args.profile, "force": False,
+            "video_type": args.video_type, "topic": args.topic,
+            "profile": args.profile, "force": args.force,
         }
+        if args.file:
+            print(f"  uploading {os.path.basename(src)}...", end=" ", flush=True)
+            body["upload_id"] = _upload(args.api, src)
+            print("ok")
+        else:
+            body["url"] = src
         if sla:
             body["sla_sec"] = sla
         ref = _post(args.api, "/api/jobs", body)

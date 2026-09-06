@@ -45,6 +45,11 @@ _ROUTING_KEY = "total:per_min"
 # Rough seed for a class with no measurements yet, relative to a CPU-only box.
 _GPU_SEED_FACTOR = 0.18
 
+# Below this many seconds of work per video-minute, a run cannot have decoded,
+# transcribed and analysed the video — it was served from cache. Even a GPU
+# class does not approach it end to end.
+_MIN_CREDIBLE_PER_MIN = float(os.getenv("VS_MIN_CREDIBLE_PER_MIN", "1.0"))
+
 
 
 @dataclass
@@ -271,6 +276,19 @@ def record_outcome(job: Job) -> None:
 
     duration_min = duration / 60.0
     observed_per_min = total / duration_min
+
+    # A run served from cache did no work, so its wall-clock says nothing about
+    # the class's throughput — but it is by far the cheapest-looking sample, so
+    # a single one convinces the router that the class is effectively free and
+    # it stops measuring anything else. core.perf learned this the hard way and
+    # grew calibration guards; this path never got them.
+    if observed_per_min < _MIN_CREDIBLE_PER_MIN:
+        logger.info(
+            "job %s on %s finished in %.1fs for %.1f min of video (%.2f s/video-min) "
+            "— treating as cache-served, not calibrating",
+            job.id, worker_class, total, duration_min, observed_per_min,
+        )
+        return
 
     with session() as db:
         # coarse routing metric

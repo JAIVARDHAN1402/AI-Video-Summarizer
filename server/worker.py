@@ -58,6 +58,16 @@ def main() -> int:
     forkless = sys.platform == "win32" or os.getenv("VS_RQ_SIMPLE", "").strip().lower() in {"1", "true", "yes"}
     worker_cls = SimpleWorker if forkless else Worker
 
+    if sys.platform == "win32":
+        # RQ enforces job timeouts with SIGALRM, which does not exist on
+        # Windows: the worker dies the moment it picks up a job, and jobs sit
+        # in the queue forever with no error anywhere near them. TimerDeathPenalty
+        # does the same job with a thread timer.
+        from rq.timeouts import TimerDeathPenalty  # type: ignore
+
+        worker_cls = type("WindowsWorker", (worker_cls,),
+                          {"death_penalty_class": TimerDeathPenalty})
+
     from server.db import init_db
     init_db()
 
