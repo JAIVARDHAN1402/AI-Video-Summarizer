@@ -48,26 +48,32 @@ def _segment_costs(K: np.ndarray) -> np.ndarray:
     return cost
 
 
-def cpd_nonlin(K: np.ndarray, ncp: int, lmin: int = 1) -> tuple[np.ndarray, float]:
-    """Best ``ncp`` change points for kernel matrix ``K``; returns (cps, cost)."""
-    n = K.shape[0]
-    cost = _segment_costs(K)
-    INF = 1e18
-    I = np.full((ncp + 1, n + 1), INF)
-    I[0, 0] = 0.0
-    prev = np.zeros((ncp + 1, n + 1), dtype=np.int64)
+def _dp(cost: np.ndarray, n: int, max_ncp: int, lmin: int) -> tuple[np.ndarray, np.ndarray]:
+    """Change-point DP up to ``max_ncp`` splits.
 
-    for k in range(1, ncp + 1):
+    ``I[k, l]`` is the best cost of splitting the first ``l`` frames into ``k``
+    segments, so one pass yields the optimum for *every* k — there is no reason
+    to re-run it per candidate count.
+    """
+    INF = 1e18
+    I = np.full((max_ncp + 1, n + 1), INF)
+    I[0, 0] = 0.0
+    prev = np.zeros((max_ncp + 1, n + 1), dtype=np.int64)
+
+    for k in range(1, max_ncp + 1):
         for l in range(k * lmin, n + 1):
-            ts = np.arange((k - 1) * lmin, l - lmin + 1)
-            if ts.size == 0:
+            lo, hi = (k - 1) * lmin, l - lmin + 1
+            if hi <= lo:
                 continue
-            cand = I[k - 1, ts] + cost[ts, l]
+            cand = I[k - 1, lo:hi] + cost[lo:hi, l]
             m = int(np.argmin(cand))
             if cand[m] < I[k, l]:
                 I[k, l] = cand[m]
-                prev[k, l] = ts[m]
+                prev[k, l] = lo + m
+    return I, prev
 
+
+def _backtrack(prev: np.ndarray, n: int, ncp: int) -> np.ndarray:
     cps: list[int] = []
     cur = n
     for k in range(ncp, 0, -1):
@@ -75,27 +81,41 @@ def cpd_nonlin(K: np.ndarray, ncp: int, lmin: int = 1) -> tuple[np.ndarray, floa
         if t > 0:
             cps.append(t)
         cur = t
-    return np.array(sorted(cps), dtype=np.int64), float(I[ncp, n])
+    return np.array(sorted(cps), dtype=np.int64)
 
 
-def cpd_auto(features: np.ndarray, max_ncp: int, vmax: float = 1.0) -> np.ndarray:
-    """Pick the number of change points automatically (penalised objective)."""
+def cpd_nonlin(K: np.ndarray, ncp: int, lmin: int = 1) -> tuple[np.ndarray, float]:
+    """Best ``ncp`` change points for kernel matrix ``K``; returns (cps, cost)."""
+    n = K.shape[0]
+    I, prev = _dp(_segment_costs(K), n, ncp, lmin)
+    return _backtrack(prev, n, ncp), float(I[ncp, n])
+
+
+def cpd_auto(
+    features: np.ndarray, max_ncp: int, vmax: float = 1.0, lmin: int = 1,
+) -> np.ndarray:
+    """Pick the number of change points automatically (penalised objective).
+
+    Builds the kernel and segment costs once and runs the DP once; the
+    penalised score for every candidate count is then just a read off the
+    table.
+    """
     n = features.shape[0]
     if n < 3:
         return np.array([], dtype=np.int64)
-    K = gaussian_kernel(features)
     max_ncp = int(min(max_ncp, n - 1))
     if max_ncp < 1:
         return np.array([], dtype=np.int64)
 
-    scores = []
-    for ncp in range(1, max_ncp + 1):
-        _, cost = cpd_nonlin(K, ncp)
-        penalty = (ncp / (2.0 * n)) * (np.log(max(n / ncp, 1.0)) + 1.0)
-        scores.append(cost / n + vmax * penalty)
+    K = gaussian_kernel(features)
+    I, prev = _dp(_segment_costs(K), n, max_ncp, lmin)
+
+    ncps = np.arange(1, max_ncp + 1, dtype=np.float64)
+    costs = I[1:, n]
+    penalty = (ncps / (2.0 * n)) * (np.log(np.maximum(n / ncps, 1.0)) + 1.0)
+    scores = np.where(costs >= 1e17, np.inf, costs / n + vmax * penalty)
     best_ncp = int(np.argmin(scores)) + 1
-    cps, _ = cpd_nonlin(K, best_ncp)
-    return cps
+    return _backtrack(prev, n, best_ncp)
 
 
 def segment_bounds(n_frames: int, change_points: np.ndarray) -> list[tuple[int, int]]:
