@@ -197,6 +197,10 @@ def main() -> int:
     ap.add_argument("--fast-cores", type=int, default=8)
     ap.add_argument("--slow-cores", type=int, default=2)
     ap.add_argument("--profile", default="fast")
+    ap.add_argument("--sla", type=float, default=None,
+                    help="wall-clock target in seconds. Pick it where the class choice "
+                         "actually decides the outcome: too loose and every class passes, "
+                         "too tight and none does — neither tells you anything about routing.")
     ap.add_argument("--video-dir", default="data/highlight/SumMe/videos",
                     help="local videos to submit; avoids download variance in the timings")
     ap.add_argument("--url", default="", help="use this URL instead of local files")
@@ -243,6 +247,8 @@ def main() -> int:
     demo = [py, "scripts/fleet_demo.py", "--api", api, "--repeat", str(args.jobs),
             "--profile", args.profile, "--serial", "--force",
             "--calibrate", str(args.calibrate)]
+    if args.sla:
+        demo += ["--sla", str(args.sla)]
     if args.url:
         demo += ["--url", args.url]
     else:

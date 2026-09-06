@@ -50,6 +50,10 @@ _GPU_SEED_FACTOR = 0.18
 # class does not approach it end to end.
 _MIN_CREDIBLE_PER_MIN = float(os.getenv("VS_MIN_CREDIBLE_PER_MIN", "1.0"))
 
+# Samples below which a class counts as thinly measured and is worth a probe,
+# provided the probe itself is predicted to meet the SLA.
+_EXPLORE_MIN_SAMPLES = int(os.getenv("VS_EXPLORE_MIN_SAMPLES", "5"))
+
 
 
 @dataclass
@@ -204,15 +208,23 @@ def route(
             samples=samples,
         ))
 
-    # Explore first: a class with no measurements has only a rough seed
-    # estimate, too crude to route on or to rule out. Probe the least-costly
-    # unmeasured class once; its real timing then feeds the model. After that,
-    # exploit: the cheapest class predicted to meet the SLA, or — if none does
-    # — the fastest overall.
+    # Explore, then exploit — but never at the SLA's expense.
+    #
+    # A class with no measurements has only a seed estimate, too crude to route
+    # on or to rule out, so probe it once. Beyond that, pure exploitation is a
+    # trap: the moment one class wins it takes every job, the others' models go
+    # stale, and the router is deciding on numbers it can no longer check. So a
+    # class that is still thinly measured is preferred *while it is itself
+    # predicted to meet the SLA* — exploration that cannot break the promise.
+    # Only if nothing meets the SLA do we fall back to the fastest overall.
     unsampled = [p for p in predictions if p.samples == 0]
     within = [p for p in predictions if p.meets_sla]
+    under_measured = [p for p in within if p.samples < _EXPLORE_MIN_SAMPLES]
+
     if unsampled:
         chosen = min(unsampled, key=lambda p: (p.predicted_sec, p.worker_class))
+    elif under_measured:
+        chosen = min(under_measured, key=lambda p: (p.samples, p.predicted_sec, p.worker_class))
     elif within:
         chosen = min(within, key=lambda p: (p.predicted_sec, p.worker_class))
     else:
@@ -344,6 +356,58 @@ def _baseline_estimate(duration_sec: float) -> Optional[float]:
         return None
 
 
+def _routing_baselines(rows: list[SlaObservation]) -> dict[str, Any]:
+    """What fixed class assignments would have done on the same jobs.
+
+    The fixed-configuration baseline answers a different question — it varies
+    the *models*, not the *placement* — so on its own it credits the planner
+    for the scheduler's work. These counterfactuals hold the plan constant and
+    vary only the routing: for each finished job, what each class's measured
+    cost predicts it would have taken, and whether that meets the same SLA.
+
+    ``random`` is the honest floor for a router with no per-class knowledge:
+    the expected met-rate when the class is picked uniformly.
+    """
+    with session() as db:
+        costs = {
+            c.worker_class: c.seconds
+            for c in db.query(SchedulerCost).filter(SchedulerCost.key == _ROUTING_KEY).all()
+        }
+    if len(costs) < 2:
+        return {"note": "needs at least two measured classes"}
+
+    per_class_met: dict[str, list[bool]] = {name: [] for name in costs}
+    per_class_ratio: dict[str, list[float]] = {name: [] for name in costs}
+    random_met: list[float] = []
+    for r in rows:
+        if not r.sla_target_sec or r.duration_sec <= 0:
+            continue
+        duration_min = r.duration_sec / 60.0
+        met_flags = []
+        for name, per_min in costs.items():
+            predicted = per_min * duration_min
+            met = predicted <= r.sla_target_sec
+            per_class_met[name].append(met)
+            per_class_ratio[name].append(predicted / r.sla_target_sec)
+            met_flags.append(met)
+        random_met.append(sum(met_flags) / len(met_flags))
+
+    def summarise(name: str) -> dict[str, Any]:
+        met, ratio = per_class_met[name], per_class_ratio[name]
+        return {
+            "sla_met_rate": round(sum(met) / len(met), 3) if met else None,
+            "mean_time_vs_sla": round(sum(ratio) / len(ratio), 3) if ratio else None,
+        }
+
+    return {
+        "always": {name: summarise(name) for name in sorted(costs)},
+        "random_choice": {
+            "sla_met_rate": round(sum(random_met) / len(random_met), 3) if random_met else None,
+        },
+        "n": len(random_met),
+    }
+
+
 # --- reporting -----------------------------------------------------------------
 
 
@@ -383,13 +447,21 @@ def sla_stats() -> dict[str, Any]:
             sum(abs(r.actual_sec - r.predicted_sec) / max(r.predicted_sec, 1) for r in rows) / len(rows),
             3,
         ),
-        "baseline_sla_met_rate": (
-            round(sum(1 for r in rows if r.baseline_met) / len(rows), 3)
-            if any(r.baseline_met is not None for r in rows) else None
-        ),
-        "baseline_mean_time_vs_sla": (
-            round(sum(baseline_overruns) / len(baseline_overruns), 3) if baseline_overruns else None
-        ),
+        # Varies the models, not the placement: this is the adaptive *planner*
+        # against a fixed configuration, and says nothing about routing.
+        "fixed_config_baseline": {
+            "sla_met_rate": (
+                round(sum(1 for r in rows if r.baseline_met) / len(rows), 3)
+                if any(r.baseline_met is not None for r in rows) else None
+            ),
+            "mean_time_vs_sla": (
+                round(sum(baseline_overruns) / len(baseline_overruns), 3)
+                if baseline_overruns else None
+            ),
+        },
+        # Holds the plan constant and varies only placement: this is the one
+        # that speaks to the scheduler.
+        "routing_baselines": _routing_baselines(rows),
         "by_worker_class": per_class,
         "cost_model": _cost_model_view(cost_rows),
     }
