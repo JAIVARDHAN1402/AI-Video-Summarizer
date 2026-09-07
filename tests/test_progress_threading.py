@@ -65,7 +65,7 @@ def test_progress_callback_only_runs_on_the_calling_thread(monkeypatch, tmp_path
     main_thread = threading.get_ident()
     callback_threads: set[int] = set()
 
-    from core import cache, fuse, ingest, qa, summarize, transcribe, vision
+    from core import cache, fuse, ingest, qa, summarize, transcribe, understand, vision
 
     meta = {
         "video_id": "vid", "source": "upload", "source_ref": "x.mp4",
@@ -90,6 +90,10 @@ def test_progress_callback_only_runs_on_the_calling_thread(monkeypatch, tmp_path
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
     monkeypatch.setattr(vision, "analyze_visual", fake_vision)
     monkeypatch.setattr(fuse, "fuse", lambda *a, **k: {"blocks": []})
+    # Pin the local path: this test is about which thread the progress
+    # callback runs on, and the LLM branch would make it depend on whether
+    # an API key happens to be configured.
+    monkeypatch.setattr(understand, "is_available", lambda: False)
     monkeypatch.setattr(summarize, "summarize", lambda *a, **k: {"chapters": []})
     monkeypatch.setattr(qa, "build_index", lambda *a, **k: None)
 

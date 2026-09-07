@@ -263,7 +263,7 @@ def process(
     run_stage("fuse", "Aligning transcript with visuals", fuse.fuse, video_id, force)
     summary = run_stage(
         "summarize", "Generating summary and chapters",
-        summarize.summarize, video_id, force, plan,
+        _understand_or_summarize, video_id, force, plan, video_type, topic,
     )
     run_stage("index", "Building Q&A index", qa.build_index, video_id, force)
 
