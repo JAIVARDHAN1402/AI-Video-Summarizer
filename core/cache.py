@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 # particular is rewritten on every pipeline progress tick, so it hits this
 # far more often than other artifacts. A few short retries ride out the lock
 # without changing write semantics.
-_REPLACE_MAX_RETRIES = 5
-_REPLACE_RETRY_DELAY_SEC = 0.1
+_REPLACE_MAX_RETRIES = 8
+_REPLACE_RETRY_DELAY_SEC = 0.15
 
 # Serialises writes to the same artifact. transcribe and vision run
 # concurrently and both report progress, so without this they race on
@@ -57,8 +57,17 @@ def _artifact_path(video_id: str, name: str) -> Path:
     return get_cache_dir(video_id) / f"{name}.json"
 
 
-def write_json(video_id: str, name: str, data: dict[str, Any]) -> None:
+def write_json(
+    video_id: str, name: str, data: dict[str, Any], required: bool = True
+) -> None:
     """Write ``data`` to ``cache/<video_id>/<name>.json`` atomically.
+
+    ``required=False`` downgrades a write that could not survive the retries
+    from an exception to a warning. Progress state is the case that matters:
+    it is rewritten on every tick, so it collides with a sync client far more
+    often than any real artifact — and losing one progress update is nothing,
+    while raising kills a run that was otherwise fine. Real artifacts stay
+    required, because silently losing a transcript is not recoverable.
 
     The scratch file is named per-writer rather than per-artifact: two threads
     writing the same artifact would otherwise open one shared ``.tmp`` path at
@@ -78,9 +87,17 @@ def write_json(video_id: str, name: str, data: dict[str, Any]) -> None:
                     tmp_path.write_text(payload, encoding="utf-8")
                     tmp_path.replace(path)
                     break
-                except OSError:
+                except OSError as e:
                     if attempt == _REPLACE_MAX_RETRIES:
-                        raise
+                        if required:
+                            raise
+                        logger.warning(
+                            "could not write %s after %d attempts (%s); continuing — "
+                            "if this repeats, exclude the cache directory from your "
+                            "file-sync client or set VS_CACHE_DIR outside it",
+                            path.name, _REPLACE_MAX_RETRIES, e.__class__.__name__,
+                        )
+                        break
                     logger.debug(
                         "retrying write of %s (attempt %d/%d) after transient lock",
                         path, attempt, _REPLACE_MAX_RETRIES,
@@ -171,7 +188,7 @@ def write_state(video_id: str, stage: str, progress: float, message: str,
     }
     if extra:
         payload.update(extra)
-    write_json(video_id, "state", payload)
+    write_json(video_id, "state", payload, required=False)
 
 
 def get_state(video_id: str) -> dict[str, Any]:
