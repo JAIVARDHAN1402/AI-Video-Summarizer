@@ -326,6 +326,13 @@ UNDERSTANDING_MAX_OUTPUT_TOKENS = int(os.getenv("VS_UNDERSTANDING_MAX_TOKENS", "
 # understood in windows instead — each window gets the full budget, and a final
 # pass writes the overview, recap, key points and glossary across them. Cost is
 # one call per window plus the reduce.
+# What the understanding call costs, for the planner. Fitted to real runs
+# (8.8 min -> 36s, 42 min -> 57s, 76 min -> 93s): a fixed round-trip plus a
+# per-minute term. Deliberately NOT scaled by the CPU probe — this stage waits
+# on a remote model, so a slower laptop does not make it slower.
+UNDERSTAND_REFERENCE_FIXED_SEC = 25.0
+UNDERSTAND_REFERENCE_SEC_PER_MIN = 0.9
+
 UNDERSTANDING_SINGLE_PASS_MAX_MIN = float(os.getenv("VS_UNDERSTANDING_SINGLE_PASS_MIN", "45"))
 UNDERSTANDING_WINDOW_MIN = float(os.getenv("VS_UNDERSTANDING_WINDOW_MIN", "25"))
 # Reasoning-model thinking budget (output tokens spent planning before the

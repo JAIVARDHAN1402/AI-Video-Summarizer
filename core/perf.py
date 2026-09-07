@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -36,7 +37,39 @@ logger = logging.getLogger(__name__)
 # multiplier is 1.0 and the constants are its raw measurements.
 _REFERENCE_CPU_MARK = 100.0
 
-_PROFILE_PATH = config.CACHE_ROOT / "hardware_profile.json"
+def _usable_cpus() -> int:
+    """Cores this process may actually run on, not the cores the box has."""
+    try:
+        import os as _os
+
+        if hasattr(_os, "sched_getaffinity"):
+            return len(_os.sched_getaffinity(0))
+        import psutil
+
+        return len(psutil.Process().cpu_affinity())
+    except Exception:
+        return os.cpu_count() or 1
+
+
+def _profile_path() -> Path:
+    """Where this process's calibration lives.
+
+    Keyed by the hardware actually available, because the learned costs are
+    only valid for it. A worker pinned to 2 of 16 cores measures itself 20x
+    slower at object detection — folding that into the machine's own profile
+    made the planner predict 19 minutes for a video it can do in 5, long after
+    the pinned run had finished. A declared worker class means the same thing
+    explicitly, so it separates the store too.
+    """
+    parts: list[str] = []
+    worker_class = os.getenv("VS_WORKER_CLASS", "").strip()
+    if worker_class:
+        parts.append(re.sub(r"[^A-Za-z0-9._-]+", "-", worker_class))
+    usable, total = _usable_cpus(), os.cpu_count() or 0
+    if total and usable and usable != total:
+        parts.append(f"{usable}of{total}core")
+    suffix = ("." + ".".join(parts)) if parts else ""
+    return config.CACHE_ROOT / f"hardware_profile{suffix}.json"
 
 # Blend weights for a newly observed RTF against the stored one. These are
 # deliberately **asymmetric**: bad news is believed quickly, good news slowly.
@@ -76,18 +109,30 @@ class HardwareProfile:
 
     @property
     def asr_workers(self) -> int:
-        """How many Whisper processes to run side by side.
+        """How many audio chunks to transcribe side by side.
 
-        Each CTranslate2 worker stops scaling past roughly 4 threads, so
-        oversubscribing beyond cores/4 costs more in context switching than it
-        buys in parallelism. Capped at 6 to bound peak RAM (~500 MB per int8
-        ``small`` worker) on 8 GB laptops.
+        This is the pipeline's main ASR lever: ``_transcribe_parallel`` caps
+        the number of parallel chunks at this number, so it decides how much of
+        the machine the stage can use. It was cores/4 — four chunks on a
+        16-core box — which left most of the CPU idle during the stage that
+        dominates every long run.
+
+        Measured on 37 minutes of speech (16 cores, int8 ``tiny``):
+
+            4 workers x 4 threads   277 s
+            8 x 2                   234 s
+            12 x 1                  222 s   <- best
+            16 x 1                  244 s   <- oversubscribed, regresses
+
+        Hence cores*3/4, capped at 12. The workers share one CTranslate2 model
+        rather than loading one each, so the RAM guard is about the decode
+        pool, not a copy per worker.
         """
         if self.has_cuda:
             return 1  # one GPU worker; batching happens inside the model
-        by_cores = self.cpu_count // 4
-        by_ram = int(max(self.ram_gb - 3.0, 1.0) // 1.0)
-        return max(1, min(6, by_cores, by_ram))
+        by_cores = self.cpu_count * 3 // 4
+        by_ram = int(max(self.ram_gb - 3.0, 1.0) // 0.5)
+        return max(1, min(12, by_cores, by_ram))
 
     @property
     def asr_threads_per_worker(self) -> int:
@@ -172,13 +217,13 @@ def get_profile(refresh: bool = False) -> HardwareProfile:
     if _PROFILE is not None and not refresh:
         return _PROFILE
 
-    if not refresh and _PROFILE_PATH.exists():
+    if not refresh and _profile_path().exists():
         try:
-            data = json.loads(_PROFILE_PATH.read_text(encoding="utf-8"))
+            data = json.loads(_profile_path().read_text(encoding="utf-8"))
             _PROFILE = HardwareProfile(**data)
             return _PROFILE
         except Exception:
-            logger.warning("hardware profile at %s unreadable; re-probing", _PROFILE_PATH)
+            logger.warning("hardware profile at %s unreadable; re-probing", _profile_path())
 
     profile = HardwareProfile(
         cpu_count=os.cpu_count() or 4,
@@ -198,8 +243,8 @@ def get_profile(refresh: bool = False) -> HardwareProfile:
 
 def _save_profile(profile: HardwareProfile) -> None:
     try:
-        _PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PROFILE_PATH.write_text(json.dumps(asdict(profile), indent=2), encoding="utf-8")
+        _profile_path().parent.mkdir(parents=True, exist_ok=True)
+        _profile_path().write_text(json.dumps(asdict(profile), indent=2), encoding="utf-8")
     except OSError:
         logger.debug("could not persist hardware profile (non-fatal)", exc_info=True)
 
@@ -499,6 +544,23 @@ def plan_for(
     planned_chunks = min(est_chunks, max_chunks)
     # +1 for the reduce pass that writes the overall summary from the sections.
     sum_predicted = sum_per_chunk * (planned_chunks + config.SUMMARIZE_TAIL_SEC)
+
+    # With a provider configured, core.understand replaces the local map-reduce
+    # entirely, and costs something quite different: one remote call (or a few,
+    # windowed) instead of a BART pass per chunk. Budgeting the local ladder for
+    # a stage that will not run inflated the estimate by minutes and made the
+    # planner downshift ASR to buy room it did not need.
+    if config.GEMINI_API_KEY:
+        learned = profile.observed_rtf.get("understand:per_min")
+        if cost_override and "understand:per_min" in cost_override:
+            learned = cost_override["understand:per_min"]
+        if learned:
+            sum_predicted = learned * duration / 60.0
+        else:
+            sum_predicted = (
+                config.UNDERSTAND_REFERENCE_FIXED_SEC
+                + config.UNDERSTAND_REFERENCE_SEC_PER_MIN * duration / 60.0
+            )
     # --- Vision knobs -----------------------------------------------------
     # Scene-detection cost scales with decoded pixels; downscale and frame-skip
     # each cut it near-linearly, so longer videos get more aggressive values.
