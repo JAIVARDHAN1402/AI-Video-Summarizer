@@ -609,7 +609,14 @@ def analyze_visual(
         )
 
     cache_dir = cache.get_cache_dir(video_id)
-    video_path = cache_dir / "video.mp4"
+    # Ingest returns as soon as the audio is ready so transcription can start;
+    # the pixels are fetched here, which puts the video download alongside ASR
+    # instead of ahead of it.
+    from core import ingest
+
+    video_path = ingest.ensure_video(
+        video_id, meta.get("source_ref", ""), max_height=plan.download_height
+    )
 
     keyframes_dir = cache_dir / "keyframes"
 

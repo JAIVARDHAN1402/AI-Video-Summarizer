@@ -17,6 +17,7 @@ import json
 import logging
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -172,6 +173,65 @@ def _download_youtube(
     )
 
 
+def _download_audio(url: str, dest_dir: Path, max_retries: int) -> tuple[Path, str]:
+    """Download only the audio stream, returning (audio_source_path, title).
+
+    Transcription is the long pole and needs nothing but audio, yet the whole
+    video used to be fetched before it could start. On a 2.5 Mbps line a
+    98-minute video is 285 MB and 15 minutes of dead time; its audio is a
+    fraction of that. The video is fetched separately, by the stage that
+    actually needs pixels, so the two transfers overlap with the work.
+    """
+    import yt_dlp
+
+    out_template = str(dest_dir / "audio_src.%(ext)s")
+    ydl_opts = {
+        **_ydl_base_opts(),
+        # Whisper resamples to 16 kHz mono regardless, so the cheapest audio
+        # stream loses nothing that survives to the model.
+        "format": "worstaudio/bestaudio/best",
+        "outtmpl": out_template,
+        "concurrent_fragment_downloads": config.YT_DLP_CONCURRENT_FRAGMENTS,
+    }
+
+    last_error: Optional[BaseException] = None
+    for attempt in range(1, max_retries + 2):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+            found = [p for p in dest_dir.glob("audio_src.*") if p.suffix != ".part"]
+            if not found:
+                raise IngestError("yt-dlp reported success but no audio file was found")
+            return found[0], ((info or {}).get("title") or url)
+        except Exception as exc:
+            last_error = exc
+            logger.warning("audio download attempt %d/%d failed: %s",
+                           attempt, max_retries + 1, exc)
+
+    raise IngestError(
+        f"Could not download audio for '{url}' after {max_retries + 1} attempt(s). "
+        f"Details: {str(last_error)[-1500:]}"
+    )
+
+
+def ensure_video(video_id: str, source_ref: str, max_height: int = 480) -> Path:
+    """Make sure ``video.mp4`` exists, fetching it if ingest only took audio.
+
+    Called by the vision stage, which is the only consumer of pixels. Ingest
+    returns as soon as the audio is ready, so this download overlaps with
+    transcription instead of preceding it.
+    """
+    cache_dir = cache.get_cache_dir(video_id)
+    video_path = cache_dir / "video.mp4"
+    if video_path.exists():
+        return video_path
+
+    cache.set_state(video_id, "vision", 0.0, f"Downloading video ({max_height}p)...")
+    path, _ = _download_youtube(source_ref, cache_dir, config.INGEST_MAX_RETRIES,
+                                max_height=max_height)
+    return path
+
+
 def _extract_audio(video_path: Path, audio_path: Path) -> None:
     cmd = [
         "ffmpeg", "-y", "-v", "error",
@@ -237,6 +297,7 @@ def ingest(
         return cache.read_json(video_id, "meta")  # type: ignore[return-value]
 
     cache.set_state(video_id, "ingest", 0.0, "Reading video details...")
+    started = time.perf_counter()
     cache_dir = cache.get_cache_dir(video_id)
     video_path = cache_dir / "video.mp4"
 
@@ -259,17 +320,17 @@ def ingest(
     if is_upload:
         cache.set_state(video_id, "ingest", 0.2, "Copying uploaded file...")
         shutil.copyfile(Path(source_ref), video_path)
+        audio_source = video_path
     else:
-        cache.set_state(
-            video_id, "ingest", 0.2,
-            f"Downloading video ({plan.download_height}p)...",
-        )
-        video_path, title = _download_youtube(
-            source_ref, cache_dir, config.INGEST_MAX_RETRIES, max_height=plan.download_height
+        cache.set_state(video_id, "ingest", 0.2, "Downloading audio track...")
+        audio_source, title = _download_audio(
+            source_ref, cache_dir, config.INGEST_MAX_RETRIES
         )
 
     cache.set_state(video_id, "ingest", 0.6, "Probing video metadata...")
-    probe = _probe(video_path)
+    probe = _probe(audio_source)
+    if not probe.get("duration_sec"):
+        probe["duration_sec"] = known_duration
 
     # The pre-download estimate can be absent (live streams) or slightly off;
     # ffprobe on the actual file is authoritative, so re-check the limit and
@@ -279,7 +340,9 @@ def ingest(
         plan = perf.plan_for(probe["duration_sec"], quality_floor=quality_floor)
 
     cache.set_state(video_id, "ingest", 0.75, "Extracting audio track...")
-    _extract_audio(video_path, cache_dir / "audio.wav")
+    _extract_audio(audio_source, cache_dir / "audio.wav")
+    if audio_source != video_path:
+        audio_source.unlink(missing_ok=True)  # the wav is the only copy needed
 
     meta = {
         "video_id": video_id,
@@ -294,6 +357,20 @@ def ingest(
         "plan": perf.plan_to_dict(plan),
     }
     cache.write_json(video_id, "meta", meta)
+
+    # Ingest is dominated by the download, so its cost is a property of the
+    # network rather than the machine, and the shipped constant cannot know it:
+    # a 98-minute video took 9.1 s per video-minute against an assumed 1.6, and
+    # the 15 minutes that went missing came straight out of the estimate. An
+    # upload is a local copy and says nothing about download speed, so only
+    # real fetches are recorded.
+    real_duration = float(meta["duration_sec"] or 0.0)
+    if not is_upload and real_duration >= config.MIN_DURATION_FOR_CALIBRATION_SEC:
+        perf.record_observation(
+            "ingest:per_min",
+            (time.perf_counter() - started) / (real_duration / 60.0),
+        )
+
     cache.set_state(video_id, "ingest", 1.0, "Ingestion complete.")
     return meta
 

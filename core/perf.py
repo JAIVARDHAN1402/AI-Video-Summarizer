@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 # multiplier is 1.0 and the constants are its raw measurements.
 _REFERENCE_CPU_MARK = 100.0
 
+def _learned_ingest_per_min(
+    profile: "HardwareProfile", cost_override: "dict[str, float] | None" = None
+) -> float:
+    """Measured seconds of ingest per video-minute, or 0.0 if never measured."""
+    if cost_override and "ingest:per_min" in cost_override:
+        return cost_override["ingest:per_min"]
+    return profile.observed_rtf.get("ingest:per_min", 0.0)
+
+
 def _usable_cpus() -> int:
     """Cores this process may actually run on, not the cores the box has."""
     try:
@@ -136,7 +145,15 @@ class HardwareProfile:
 
     @property
     def asr_threads_per_worker(self) -> int:
-        return max(2, self.cpu_count // max(self.asr_workers, 1))
+        """Threads each ASR worker gets, so that workers x threads fits the CPU.
+
+        The floor used to be 2, which quietly broke the budget once the worker
+        count went up: 12 workers on a 16-core box asked for 24 threads, and
+        vision runs concurrently on the same cores. The measured 12x1 config
+        became a 24-thread thrash, and a 98-minute video spent 52 minutes in
+        analyze against a predicted 12.
+        """
+        return max(1, self.cpu_count // max(self.asr_workers, 1))
 
 
 # Matmul size and repetition for the CPU probe. Large enough that BLAS thread
@@ -638,7 +655,17 @@ def plan_for(
         notes=notes,
     )
     plan.predicted_sec = {
-        "ingest": round(config.INGEST_REFERENCE_SEC_PER_MIN * duration / 60 / profile.speed, 1),
+        # Download-bound, so it scales with the network rather than the CPU:
+        # use the measured per-minute cost when there is one and do not divide
+        # it by the CPU probe.
+        "ingest": round(
+            (
+                _learned_ingest_per_min(profile, cost_override) * duration / 60.0
+                if _learned_ingest_per_min(profile, cost_override)
+                else config.INGEST_REFERENCE_SEC_PER_MIN * duration / 60 / profile.speed
+            ),
+            1,
+        ),
         "analyze": round(max(asr_predicted, vision_predicted), 1),
         "summarize": round(sum_predicted, 1),
         "index": round(config.INDEX_REFERENCE_SEC_PER_MIN * duration / 60 / profile.speed, 1),
