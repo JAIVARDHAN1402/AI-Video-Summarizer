@@ -42,10 +42,18 @@ def _targets() -> list[tuple[str, Callable[[], object]]]:
         ("object detection", vision._get_yolo),          # noqa: SLF001 - internal by design
         ("visual embeddings", vision._get_clip),         # noqa: SLF001
         ("retrieval embeddings", qa._get_embedding_model),  # noqa: SLF001
-        ("summarizer", lambda: summarize._get_summarizer(config.SUMMARIZER_MODEL)),  # noqa: SLF001
     ]
-    if config.CHAPTER_TITLES_USE_LLM:
-        targets.append(("chapter titles", summarize._get_instruct_generator))  # noqa: SLF001
+
+    # With a provider configured, core.understand replaces the local map-reduce
+    # and these never run — but warming them still holds ~700 MB resident for
+    # the life of the process, which on a hosted box is a larger instance and a
+    # real monthly cost. They stay loadable on demand for the no-key fallback.
+    if not config.GEMINI_API_KEY:
+        targets.append(
+            ("summarizer", lambda: summarize._get_summarizer(config.SUMMARIZER_MODEL))  # noqa: SLF001
+        )
+        if config.CHAPTER_TITLES_USE_LLM:
+            targets.append(("chapter titles", summarize._get_instruct_generator))  # noqa: SLF001
     if config.OCR_ENABLED:
         targets.append(("on-screen text", vision._get_ocr_reader))  # noqa: SLF001
     return targets

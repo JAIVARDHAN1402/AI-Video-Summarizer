@@ -1,10 +1,10 @@
 # Backend deployment for Render (the frontend goes to Vercel separately).
 #
-# Sizing is not arbitrary. The API loads Whisper, YOLOv8, CLIP, EasyOCR, FAISS
-# and a sentence-transformer into one process — about 4 GB resident — and it
-# transcribes on CPU, so a 43-minute video takes ~6 minutes of real compute.
-# Free and starter tiers (512 MB) cannot hold the models at all: the container
-# is OOM-killed during warm-up, before it ever serves a request.
+# Sizing is measured, not guessed: the API sits at ~1.26 GB resident with
+# YOLOv8, CLIP and the retrieval embedder warm, and peaks higher while a job
+# runs 12 parallel Whisper workers. 2 GB is the working minimum and leaves
+# little headroom; 4 GB is comfortable. Free and starter tiers (512 MB) are
+# OOM-killed during warm-up, before serving a single request.
 #
 #   render.com -> New -> Blueprint -> point at this repo
 #
@@ -16,7 +16,7 @@ services:
     name: video-summarizer-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: standard          # 2 GB is already tight; pro (4 GB) is the safe floor
+    plan: standard          # 2 GB — the measured working minimum; pro (4 GB) for headroom
     healthCheckPath: /api/health
     # The models take ~40 s to warm; don't let the platform kill the boot.
     initialDeployHook: ""
