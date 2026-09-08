@@ -11,11 +11,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import config
 
@@ -29,8 +31,14 @@ logger = logging.getLogger(__name__)
 # particular is rewritten on every pipeline progress tick, so it hits this
 # far more often than other artifacts. A few short retries ride out the lock
 # without changing write semantics.
-_REPLACE_MAX_RETRIES = 5
-_REPLACE_RETRY_DELAY_SEC = 0.1
+_REPLACE_MAX_RETRIES = 8
+_REPLACE_RETRY_DELAY_SEC = 0.15
+
+# Serialises writes to the same artifact. transcribe and vision run
+# concurrently and both report progress, so without this they race on
+# state.json — and, before the temp filename was made unique below, raced on
+# the same scratch file and failed outright with a PermissionError.
+_WRITE_LOCK = threading.Lock()
 
 
 def get_video_id(source_ref: str) -> str:
@@ -49,24 +57,54 @@ def _artifact_path(video_id: str, name: str) -> Path:
     return get_cache_dir(video_id) / f"{name}.json"
 
 
-def write_json(video_id: str, name: str, data: dict[str, Any]) -> None:
-    """Write ``data`` to ``cache/<video_id>/<name>.json`` atomically."""
-    path = _artifact_path(video_id, name)
-    tmp_path = path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def write_json(
+    video_id: str, name: str, data: dict[str, Any], required: bool = True
+) -> None:
+    """Write ``data`` to ``cache/<video_id>/<name>.json`` atomically.
 
-    for attempt in range(1, _REPLACE_MAX_RETRIES + 1):
+    ``required=False`` downgrades a write that could not survive the retries
+    from an exception to a warning. Progress state is the case that matters:
+    it is rewritten on every tick, so it collides with a sync client far more
+    often than any real artifact — and losing one progress update is nothing,
+    while raising kills a run that was otherwise fine. Real artifacts stay
+    required, because silently losing a transcript is not recoverable.
+
+    The scratch file is named per-writer rather than per-artifact: two threads
+    writing the same artifact would otherwise open one shared ``.tmp`` path at
+    once, which fails on Windows with a PermissionError rather than merely
+    interleaving. The lock then makes the write-then-rename pair atomic against
+    other writers in this process, and the retry loop rides out the external
+    locks a sync client or antivirus scanner briefly takes on the destination.
+    """
+    path = _artifact_path(video_id, name)
+    payload = json.dumps(data, indent=2)
+    tmp_path = path.with_suffix(f".json.{os.getpid()}.{threading.get_ident():x}.tmp")
+
+    with _WRITE_LOCK:
         try:
-            tmp_path.replace(path)
-            break
-        except OSError:
-            if attempt == _REPLACE_MAX_RETRIES:
-                raise
-            logger.debug(
-                "retrying replace of %s (attempt %d/%d) after transient lock",
-                path, attempt, _REPLACE_MAX_RETRIES,
-            )
-            time.sleep(_REPLACE_RETRY_DELAY_SEC * attempt)
+            for attempt in range(1, _REPLACE_MAX_RETRIES + 1):
+                try:
+                    tmp_path.write_text(payload, encoding="utf-8")
+                    tmp_path.replace(path)
+                    break
+                except OSError as e:
+                    if attempt == _REPLACE_MAX_RETRIES:
+                        if required:
+                            raise
+                        logger.warning(
+                            "could not write %s after %d attempts (%s); continuing — "
+                            "if this repeats, exclude the cache directory from your "
+                            "file-sync client or set VS_CACHE_DIR outside it",
+                            path.name, _REPLACE_MAX_RETRIES, e.__class__.__name__,
+                        )
+                        break
+                    logger.debug(
+                        "retrying write of %s (attempt %d/%d) after transient lock",
+                        path, attempt, _REPLACE_MAX_RETRIES,
+                    )
+                    time.sleep(_REPLACE_RETRY_DELAY_SEC * attempt)
+        finally:
+            tmp_path.unlink(missing_ok=True)
     logger.debug("wrote %s", path)
 
 
@@ -87,16 +125,70 @@ def artifact_exists(video_id: str, name: str) -> bool:
     return read_json(video_id, name) is not None
 
 
+# When two stages run concurrently (transcribe and vision), each still reports
+# its own fine-grained progress. Letting both write state.json directly would
+# make the two overwrite each other, so the orchestrator installs a sink and
+# publishes a single merged view instead. See core.pipeline._parallel_progress.
+_progress_sink: Optional[Callable[[str, str, float, str, Optional[str]], None]] = None
+
+
+def set_progress_sink(sink: Optional[Callable[[str, str, float, str, Optional[str]], None]]) -> None:
+    """Route :func:`set_state` through ``sink`` instead of writing state.json.
+
+    Passing None restores direct writes. The sink is process-global, matching
+    the fact that a single pipeline run owns the process while it executes.
+    """
+    global _progress_sink
+    _progress_sink = sink
+
+
 def set_state(video_id: str, stage: str, progress: float, message: str,
               error: Optional[str] = None) -> None:
     """Persist current pipeline stage/progress for the given video."""
-    write_json(video_id, "state", {
+    if _progress_sink is not None:
+        _progress_sink(video_id, stage, progress, message, error)
+        return
+    write_state(video_id, stage, progress, message, error)
+
+
+# Progress ticks arrive far faster than any consumer needs them, and each one
+# is a file write — expensive when the cache lives in a synced folder, and a
+# source of lock contention. Ticks are therefore coalesced to this interval.
+# Terminal states always write through, so the final state is never lost.
+_STATE_WRITE_MIN_INTERVAL_SEC = 0.3
+_TERMINAL_STAGES = frozenset({"done", "error"})
+_last_state_write: dict[str, float] = {}
+
+
+def write_state(video_id: str, stage: str, progress: float, message: str,
+                error: Optional[str] = None, extra: Optional[dict[str, Any]] = None) -> None:
+    """Write state.json unconditionally, bypassing any installed sink.
+
+    Intermediate progress ticks are rate-limited; terminal states, errors, and
+    stage boundaries are always persisted.
+    """
+    important = (
+        stage in _TERMINAL_STAGES or error is not None
+        or progress <= 0.0 or progress >= 1.0
+    )
+    if not important:
+        now = time.monotonic()
+        if now - _last_state_write.get(video_id, 0.0) < _STATE_WRITE_MIN_INTERVAL_SEC:
+            return
+        _last_state_write[video_id] = now
+    else:
+        _last_state_write[video_id] = time.monotonic()
+
+    payload = {
         "stage": stage,
         "progress": progress,
         "message": message,
         "error": error,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if extra:
+        payload.update(extra)
+    write_json(video_id, "state", payload, required=False)
 
 
 def get_state(video_id: str) -> dict[str, Any]:

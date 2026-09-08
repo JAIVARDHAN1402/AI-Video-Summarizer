@@ -1,9 +1,9 @@
 [theme]
 base = "dark"
-primaryColor = "#6366f1"
-backgroundColor = "#0b0e14"
-secondaryBackgroundColor = "#141925"
-textColor = "#e7e9ee"
+primaryColor = "#6D6AF8"
+backgroundColor = "#07080B"
+secondaryBackgroundColor = "#0E1015"
+textColor = "#EDEFF5"
 font = "sans serif"
 
 [client]

@@ -7,19 +7,24 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 import config
-from core import cache
+from core import cache, llm
 
 logger = logging.getLogger(__name__)
 
 _EMBEDDING_MODEL = None
 _FLAN_PIPELINE = None
 _TIKTOKEN_ENCODING = None
+
+_LEADING_FILLER_RE = re.compile(
+    r"^(?:so|and|but|then|well|okay|ok|now)\b[\s,]*", re.I
+)
 
 _LOW_CONFIDENCE_HEDGE = (
     "This may not be covered in the video, but based on what was said: "
@@ -201,18 +206,41 @@ def _retrieve(video_id: str, question: str) -> tuple[list[dict[str, Any]], list[
 
 
 def _build_prompt(question: str, chunks: list[dict[str, Any]]) -> str:
-    context_lines = "\n".join(
-        f"[{_format_mmss(c['start'])}-{_format_mmss(c['end'])}] {c['text']}" for c in chunks
-    )
-    return (
-        "Answer the question using ONLY the context below. Each context block is "
-        "labeled with its timestamp. If the answer is not in the context, say "
-        '"This is not discussed in the video."\n'
-        f"Context:\n{context_lines}\n\n"
-        f"Question: {question}\n"
-        "Answer:"
-    )
+    """Assemble the generation prompt from the retrieved passages.
 
+    Two choices here are deliberate, and both were wrong before:
+
+    * **Fewer passages than we retrieve.** flan-t5-base has a 512-token
+      encoder; feeding it every retrieved chunk meant most of the context was
+      silently truncated away and the model answered from whichever fragment
+      happened to survive. Generation now sees only the best few passages,
+      while citations still list everything retrieved, so no provenance is
+      lost.
+    * **No timestamp labels in the context.** They are metadata, not
+      narration, and a small model reads them as content — the bracketed
+      digits were being copied straight into answers.
+    """
+    encoding = _get_tiktoken_encoding()
+    budget = config.QA_CONTEXT_MAX_TOKENS
+    parts: list[str] = []
+    for chunk in chunks[: config.QA_GENERATION_CHUNKS]:
+        text = chunk["text"].strip()
+        tokens = encoding.encode(text)
+        if len(tokens) > budget:
+            text = encoding.decode(tokens[:budget])
+        parts.append(text)
+        budget -= min(len(tokens), budget)
+        if budget <= 0:
+            break
+
+    context = chr(10).join(parts)
+    return (
+        "Read the context and answer the question in one or two complete "
+        "sentences. If the context does not contain the answer, reply exactly: "
+        "This is not discussed in the video."
+        + chr(10) + chr(10) + "Context:" + chr(10) + context
+        + chr(10) + chr(10) + f"Question: {question}" + chr(10) + "Answer:"
+    )
 
 def _generate_gemini(prompt: str) -> str:
     import requests
@@ -241,10 +269,56 @@ def _get_flan_pipeline():
 
 
 def _generate_local(prompt: str) -> str:
+    """Generate with the local model.
+
+    ``min_new_tokens`` and beam search are what stop flan-t5-base returning
+    four-word sentence fragments; ``no_repeat_ngram_size`` is what stops the
+    same settings degenerating into "Borne-Borne-Borne..." when the question
+    has no answer in the context and the model is nonetheless obliged to
+    produce a minimum number of tokens.
+    """
     generator = _get_flan_pipeline()
-    output = generator(prompt, max_new_tokens=config.QA_MAX_NEW_TOKENS, truncation=True)
+    output = generator(
+        prompt,
+        max_new_tokens=config.QA_MAX_NEW_TOKENS,
+        min_new_tokens=config.QA_MIN_NEW_TOKENS,
+        num_beams=config.QA_NUM_BEAMS,
+        no_repeat_ngram_size=config.QA_NO_REPEAT_NGRAM,
+        truncation=True,
+    )
     return output[0]["generated_text"].strip()
 
+
+_REAL_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+
+
+def _is_degenerate(text: str) -> bool:
+    """True when generation collapsed instead of answering.
+
+    Two failure modes, both of which reached users:
+
+    * **Repetition** — forced past a minimum length with nothing to say, the
+      model loops a phrase ("Borne-Borne-Borne...").
+    * **Enumeration** — it emits list markers or a run of single letters
+      ("(iii). (iv.) a b c d e f g..."). Every token there is unique, so a
+      repetition check alone passes it; what gives it away is that almost
+      none of the tokens are real words.
+    """
+    words = text.split()
+    if not words:
+        return True
+    if len(_REAL_WORD_RE.findall(text)) < config.QA_MIN_REAL_WORDS:
+        return True
+    if len(words) < config.QA_MIN_NEW_TOKENS:
+        return False
+    return len(set(w.lower() for w in words)) / len(words) < config.QA_MIN_UNIQUE_WORD_RATIO
+
+def _tidy_answer(text: str) -> str:
+    """Light cleanup of an extractive answer: trim filler, fix the opening case."""
+    text = _LEADING_FILLER_RE.sub("", text.strip()).strip()
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
 
 def _generate(prompt: str) -> str:
     """Single interchangeable entry point for both generation backends."""
@@ -259,39 +333,196 @@ def _generate(prompt: str) -> str:
 # --- Public API ------------------------------------------------------------------------
 
 
-def answer(video_id: str, question: str) -> dict[str, Any]:
+# --- Tutor path (capable model) --------------------------------------------------
+
+_TUTOR_PERSONA = """You are a patient, expert tutor answering questions about a video \
+the reader has not watched. You are given passages from its transcript and the \
+structured explanation already written for it.
+
+How to answer:
+- Answer the actual question directly, first. Then explain as much as it takes for the \
+reader to genuinely understand — a sentence when that is enough, several paragraphs when \
+it is not. Never pad.
+- The video's material is your primary source. Where the video covers the answer, ground \
+your explanation in it and cite the timestamps you used.
+- Where the video is incomplete, wrong, or silent, you may complete the answer from \
+standard knowledge — that is what a tutor does. But say so: set "beyond_video" to true \
+and make clear in the answer which part the video did not cover.
+- If the question has nothing to do with this video's subject at all, say so plainly \
+instead of inventing a connection.
+- Write plain prose with short paragraphs. Use a fenced code block for code. No preamble \
+like "Based on the transcript".
+- Follow-up questions refer to the conversation so far; read it before answering."""
+
+_TUTOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string", "description": "The full answer, in markdown."},
+        "beyond_video": {
+            "type": "boolean",
+            "description": "true if the answer relies on knowledge the video did not cover.",
+        },
+        "cited_sec": {
+            "type": "array",
+            "description": "Start times (seconds) of the passages actually used.",
+            "items": {"type": "number"},
+        },
+        "off_topic": {
+            "type": "boolean",
+            "description": "true if the question is unrelated to this video's subject.",
+        },
+    },
+    "required": ["answer", "beyond_video", "off_topic"],
+}
+
+
+def _understanding_context(video_id: str, question: str) -> str:
+    """The explanation, glossary and code already written for this video.
+
+    Retrieval over raw transcript chunks returns spoken fragments; the
+    understanding document holds the same material already organised and
+    corrected. Offering both lets the tutor answer from the clean version and
+    still cite the moment in the video it came from.
+    """
+    u = cache.read_json(video_id, "understanding")
+    if not u:
+        return ""
+    parts: list[str] = []
+    if u.get("overview"):
+        parts.append(f"OVERVIEW: {u['overview']}")
+
+    sections = u.get("explanation") or []
+    if sections:
+        try:
+            q_vec = _embed_texts([question])
+            sec_vecs = _embed_texts([f"{s.get('heading','')} {s.get('body','')}" for s in sections])
+            order = np.argsort(-(sec_vecs @ q_vec[0]))[: config.QA_UNDERSTANDING_SECTIONS]
+        except Exception:
+            order = range(min(len(sections), config.QA_UNDERSTANDING_SECTIONS))
+        parts.append("RELEVANT SECTIONS OF THE WRITTEN EXPLANATION:")
+        for i in order:
+            s = sections[int(i)]
+            parts.append(f"[{_format_mmss(s.get('start_sec', 0))}] {s.get('heading','')}\n"
+                         f"{s.get('body','')}")
+
+    if u.get("glossary"):
+        parts.append("GLOSSARY: " + "; ".join(
+            f"{g.get('term')} = {g.get('definition')}" for g in u["glossary"]))
+    coding = u.get("coding") or {}
+    if coding.get("implementations"):
+        impl = coding["implementations"][0]
+        parts.append(f"REFERENCE IMPLEMENTATION ({impl.get('language')}):\n{impl.get('code','')}")
+    return "\n\n".join(parts)
+
+
+def _answer_with_llm(
+    video_id: str, question: str, retrieved: list[dict[str, Any]],
+    history: list[dict[str, str]] | None,
+) -> dict[str, Any]:
+    encoding = _get_tiktoken_encoding()
+    budget = config.QA_LLM_CONTEXT_MAX_TOKENS
+    passages: list[str] = []
+    for chunk in retrieved[: config.QA_LLM_CONTEXT_CHUNKS]:
+        text = chunk["text"].strip()
+        tokens = encoding.encode(text)
+        if len(tokens) > budget:
+            text = encoding.decode(tokens[:budget])
+        passages.append(f"[{_format_mmss(chunk['start'])}] {text}")
+        budget -= min(len(tokens), budget)
+        if budget <= 0:
+            break
+
+    blocks = []
+    written = _understanding_context(video_id, question)
+    if written:
+        blocks.append("=== WRITTEN EXPLANATION OF THIS VIDEO ===\n" + written)
+    if passages:
+        blocks.append("=== TRANSCRIPT PASSAGES (timestamped) ===\n" + "\n\n".join(passages))
+    for turn in (history or [])[-config.QA_HISTORY_TURNS:]:
+        blocks.append(f"EARLIER — Q: {turn.get('q','')}\nA: {turn.get('a','')}")
+    blocks.append(f"=== QUESTION ===\n{question}")
+
+    result = llm.get_client().generate_json(
+        _TUTOR_PERSONA, "\n\n".join(blocks),
+        schema=_TUTOR_SCHEMA,
+        temperature=0.3,
+        max_output_tokens=config.QA_LLM_MAX_OUTPUT_TOKENS,
+        thinking_budget=config.QA_LLM_THINKING_BUDGET,
+    )
+    data = result.data or {}
+    text = (data.get("answer") or "").strip()
+    if not text:
+        raise llm.LLMError("empty answer")
+
+    cited = set(float(s) for s in (data.get("cited_sec") or []))
+    used = [c for c in retrieved if any(abs(c["start"] - s) < 30 for s in cited)] or retrieved
+    return {
+        "answer": text,
+        "sources": [{"start": c["start"], "end": c["end"], "text": c["text"]} for c in used],
+        "confidence": "low" if data.get("off_topic") else "high",
+        "beyond_video": bool(data.get("beyond_video")),
+        "off_topic": bool(data.get("off_topic")),
+    }
+
+
+def answer(
+    video_id: str, question: str, history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     """Answer a natural-language question about the video, with timestamp citations.
 
     Args:
         video_id: The cache key for this video (build_index() must have run).
         question: The user's natural-language question.
+        history: Prior turns as ``[{"q": ..., "a": ...}]`` so follow-ups
+            ("explain that further") resolve against the conversation.
 
     Returns:
-        {"answer": str, "sources": [{"start","end","text"}, ...], "confidence": "high"|"low"}
+        {"answer", "sources", "confidence", and — on the tutor path —
+        "beyond_video" and "off_topic"}
     """
     retrieved, scores = _retrieve(video_id, question)
+    not_discussed = {
+        "answer": "This is not discussed in the video.",
+        "sources": [],
+        "confidence": "low",
+    }
+
+    # With a capable model, retrieval is context rather than a gate. A thin
+    # match usually means the wording differs or the question spans the whole
+    # video, not that it is unanswerable — and the model can say so itself,
+    # which the local path cannot be trusted to do.
+    if llm.get_client().available:
+        try:
+            return _answer_with_llm(video_id, question, retrieved, history)
+        except llm.LLMError:
+            logger.warning("tutor answer failed; falling back to the local model",
+                           exc_info=True)
 
     if not retrieved:
-        return {
-            "answer": "This is not discussed in the video.",
-            "sources": [],
-            "confidence": "low",
-        }
+        return not_discussed
 
+    # Without one, do not generate when retrieval finds nothing related. Asked
+    # for an answer that is not in its context, a small instruction model
+    # invents a fluent one — "what is the capital of France?" against a coding
+    # lecture produced a confident string of invented place names. Refusing is
+    # both more honest and the only behaviour consistent with a product whose
+    # answers are supposed to be grounded in cited passages.
     top_score = scores[0]
-    confidence = "high" if top_score >= config.RAG_LOW_CONFIDENCE_THRESHOLD else "low"
+    if top_score < config.RAG_LOW_CONFIDENCE_THRESHOLD:
+        return not_discussed
 
-    prompt = _build_prompt(question, retrieved)
-    generated = _generate(prompt).strip()
-    if not generated:
-        generated = "This is not discussed in the video."
-
-    if confidence == "low":
-        generated = f"{_LOW_CONFIDENCE_HEDGE}{generated}"
+    generated = _generate(_build_prompt(question, retrieved)).strip()
+    if not generated or _is_degenerate(generated):
+        return not_discussed
 
     sources = [{"start": c["start"], "end": c["end"], "text": c["text"]} for c in retrieved]
-    return {"answer": generated, "sources": sources, "confidence": confidence}
-
+    return {
+        "answer": _tidy_answer(generated),
+        "sources": sources,
+        # Above the floor but still weakly matched: answer, but let the UI
+        # show the reader that the grounding is thin.
+        "confidence": "high" if top_score >= config.RAG_HIGH_CONFIDENCE_THRESHOLD else "low",
+    }
 
 if __name__ == "__main__":
     import argparse

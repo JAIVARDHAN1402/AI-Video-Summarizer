@@ -1,0 +1,6 @@
+# Highlight/importance model training (ml/). Install on top of requirements.txt.
+# torch / numpy / tqdm already come from requirements.txt; these are the extras
+# the training and evaluation code needs. Not imported by the runtime pipeline
+# unless VS_HIGHLIGHT_MODEL points at a trained checkpoint.
+scipy>=1.11            # .mat dataset files + Kernel Temporal Segmentation
+scikit-learn>=1.3      # rank-correlation metrics, fold splitting

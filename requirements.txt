@@ -2,6 +2,9 @@
 python-dotenv==1.0.1
 numpy==1.26.4
 tqdm==4.66.4
+# Used by core/perf.py to size the ASR worker pool against available RAM.
+# Optional at runtime (there is a fallback), but recommended.
+psutil==7.2.2
 
 # Media
 # yt-dlp is pinned loosely (min version, not ==) because YouTube changes its
@@ -23,6 +26,13 @@ ultralytics==8.2.0
 open-clip-torch==2.24.0
 torch==2.3.1
 torchvision==0.18.1
+easyocr==1.7.1  # on-screen text (slides/whiteboards) from keyframes
+# easyocr depends on opencv-python-headless, which shares the same "cv2"
+# import namespace as opencv-python above. Pinning it to the same version
+# keeps them in lockstep instead of letting pip's resolver drift to a
+# newer opencv-python-headless build that drags in numpy 2.x, which breaks
+# ABI compatibility with the pinned torch/faiss-cpu/ultralytics below.
+opencv-python-headless==4.10.0.84
 
 # NLP
 transformers==4.44.0
