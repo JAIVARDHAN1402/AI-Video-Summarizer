@@ -28,6 +28,10 @@ from core.models import DependencyError, IngestError, VideoTooLongError
 
 logger = logging.getLogger(__name__)
 
+# ffprobe can transiently fail to open a file a sync client is uploading.
+_PROBE_MAX_RETRIES = 5
+_PROBE_RETRY_DELAY_SEC = 1.0
+
 
 def _check_dependencies() -> None:
     """Fail fast and clearly if FFmpeg is not on PATH.
@@ -57,9 +61,30 @@ def _probe(video_path: Path) -> dict[str, Any]:
         "-show_entries", "format=duration",
         "-of", "json", str(video_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise IngestError(f"ffprobe failed on {video_path.name}: {result.stderr.strip()[-1000:]}")
+    # A freshly written media file is briefly unopenable when a sync client
+    # (OneDrive/Dropbox) grabs it — ffprobe then exits non-zero with *empty*
+    # stderr, which read as "ffprobe failed on audio_src.mp4:" and killed the
+    # run seconds after a 260 MB download had finished. Retry before believing
+    # it, the same way cache writes do.
+    result = None
+    for attempt in range(1, _PROBE_MAX_RETRIES + 1):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            break
+        if attempt < _PROBE_MAX_RETRIES:
+            logger.warning("ffprobe on %s failed (exit %d); retrying in %.1fs",
+                           video_path.name, result.returncode,
+                           _PROBE_RETRY_DELAY_SEC * attempt)
+            time.sleep(_PROBE_RETRY_DELAY_SEC * attempt)
+
+    if result is None or result.returncode != 0:
+        size = video_path.stat().st_size if video_path.exists() else -1
+        detail = (result.stderr.strip()[-1000:] if result else "") or (
+            f"exit {result.returncode if result else '?'}, no stderr — the file is "
+            f"{size:,} bytes and could not be opened. If it lives in a synced "
+            f"folder, exclude it or set VS_CACHE_DIR outside it."
+        )
+        raise IngestError(f"ffprobe failed on {video_path.name}: {detail}")
 
     data = json.loads(result.stdout)
     duration = float(data.get("format", {}).get("duration", 0.0))
