@@ -165,6 +165,13 @@ HIGHLIGHT_AUTO_BUILD = os.getenv("VS_HIGHLIGHT_AUTO", "1").strip().lower() in {"
 # 10-minute one. Scenes beyond the cap are merged, shortest-first, so the
 # timeline stays complete — only its granularity drops.
 MAX_KEYFRAMES = 48
+# Absolute ceiling, to bound disk and memory. MAX_KEYFRAMES above is the
+# *starting* target; the planner raises it toward this when vision has room,
+# because vision runs concurrently with ASR and is not the critical path on a
+# long video. A flat 48 gave a 12-hour lecture one keyframe every 15 minutes —
+# the same budget a 10-minute clip gets — which is why long videos lost most
+# of their on-screen material.
+MAX_KEYFRAMES_ABSOLUTE = int(os.getenv("VS_MAX_KEYFRAMES", "400"))
 # ...but never more than roughly one per this many seconds, and never
 # fewer than MIN_KEYFRAMES. Without the interval a short clip paid the
 # full 48-keyframe cost for a minute of footage.
@@ -335,6 +342,11 @@ UNDERSTAND_REFERENCE_SEC_PER_MIN = 0.9
 
 UNDERSTANDING_SINGLE_PASS_MAX_MIN = float(os.getenv("VS_UNDERSTANDING_SINGLE_PASS_MIN", "45"))
 UNDERSTANDING_WINDOW_MIN = float(os.getenv("VS_UNDERSTANDING_WINDOW_MIN", "25"))
+
+# Seconds to wait between window calls. A long video is many calls in quick
+# succession, which is exactly what trips a per-minute quota — a 12-hour video
+# is 29 of them. The pause costs far less than the retries it avoids.
+UNDERSTANDING_WINDOW_PAUSE_SEC = float(os.getenv("VS_UNDERSTANDING_WINDOW_PAUSE", "2.0"))
 # Reasoning-model thinking budget (output tokens spent planning before the
 # visible reply). 0 = answer directly (fastest, cheapest); higher can help
 # on coding videos where the model benefits from reasoning through the code.

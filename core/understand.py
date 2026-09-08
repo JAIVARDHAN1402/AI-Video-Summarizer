@@ -460,6 +460,7 @@ def _generate_windowed(
     explanation: list[dict[str, Any]] = []
     chapters: list[dict[str, Any]] = []
     scene_notes: list[dict[str, Any]] = []
+    failed: list[int] = []
     model = client.model
 
     for i, (start, end) in enumerate(bounds, 1):
@@ -483,14 +484,26 @@ def _generate_windowed(
                                  config.UNDERSTANDING_MAX_SCENE_IMAGES)
             if config.UNDERSTANDING_SEND_SCENE_IMAGES else []
         )
-        result = client.generate_json(
-            persona, prompt,
-            schema=_WINDOW_SCHEMA,
-            temperature=config.UNDERSTANDING_TEMPERATURE,
-            max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
-            thinking_budget=thinking,
-            images=images,
-        )
+        try:
+            result = client.generate_json(
+                persona, prompt,
+                schema=_WINDOW_SCHEMA,
+                temperature=config.UNDERSTANDING_TEMPERATURE,
+                max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
+                thinking_budget=thinking,
+                images=images,
+            )
+        except llm.LLMError as exc:
+            # One window failing must not discard the others. A 12-hour video
+            # is 29 calls; treating any single failure as fatal sent the whole
+            # thing to the local summariser, which is what "long videos give
+            # worse output" actually was. Losing one window costs that stretch
+            # of the video; losing all of them costs the feature.
+            failed.append(i)
+            logger.warning("  part %d/%d failed (%s); continuing without it",
+                           i, len(bounds), exc)
+            continue
+
         model = result.model
         part = result.data or {}
         explanation += part.get("explanation") or []
@@ -498,6 +511,21 @@ def _generate_windowed(
         scene_notes += part.get("scene_notes") or []
         logger.info("  part %d/%d: %d sections", i, len(bounds),
                     len(part.get("explanation") or []))
+
+        # Long videos are many calls in quick succession, which is what trips
+        # the per-minute quota in the first place. A short pause between them
+        # costs far less than the retries it avoids.
+        if i < len(bounds) and config.UNDERSTANDING_WINDOW_PAUSE_SEC:
+            time.sleep(config.UNDERSTANDING_WINDOW_PAUSE_SEC)
+
+    if not explanation:
+        raise llm.LLMError(
+            f"every one of the {len(bounds)} windows failed; nothing to summarise"
+        )
+    if failed:
+        logger.warning("%s: %d of %d windows failed (%s); explanation covers the rest",
+                       video_id, len(failed), len(bounds),
+                       ", ".join(str(f) for f in failed))
 
     cache.set_state(video_id, "summarize", 0.85, "Writing the overall summary...")
     digest = "\n".join(
@@ -537,6 +565,7 @@ def _generate_windowed(
         "chapters": chapters,
         "scene_notes": scene_notes,
         "windows": len(bounds),
+        "windows_failed": len(failed),
     }
     return data, (reduced.model or model)
 

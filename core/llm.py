@@ -40,6 +40,21 @@ MAX_CONTEXT_CHARS = 600_000
 ImageRef = tuple[str, bytes]
 
 
+def _retry_delay_sec(response) -> float:
+    """The wait Gemini asks for in a 429 body, if it gave one.
+
+    It arrives as a RetryInfo detail, e.g. {"retryDelay": "31s"}.
+    """
+    try:
+        for detail in (response.json().get("error", {}).get("details") or []):
+            raw = detail.get("retryDelay")
+            if raw:
+                return min(float(str(raw).rstrip("s")), 120.0)
+    except Exception:
+        pass
+    return 0.0
+
+
 class LLMError(RuntimeError):
     """Raised when the model call fails or returns something unusable."""
 
@@ -180,8 +195,17 @@ class LLMClient:
 
             if response.status_code in (429, 500, 502, 503, 504):
                 last_error = f"HTTP {response.status_code}: {response.text[:300]}"
-                logger.warning("LLM attempt %d/%d transient: %s", attempt, retries, last_error)
-                time.sleep(min(2 ** attempt, 30))
+                # A rate limit is not a transient blip to back off from in
+                # seconds: the quota is per minute, so an exponential ramp that
+                # tops out around six seconds just burns the retries and fails.
+                # Gemini says how long to wait in the error body; honour it.
+                if response.status_code == 429:
+                    delay = _retry_delay_sec(response) or min(30 * attempt, 90)
+                else:
+                    delay = min(2 ** attempt, 30)
+                logger.warning("LLM attempt %d/%d transient (%s); waiting %.0fs",
+                               attempt, retries, last_error[:120], delay)
+                time.sleep(delay)
                 continue
 
             # 400 and friends are our fault (bad key, bad schema); don't retry.

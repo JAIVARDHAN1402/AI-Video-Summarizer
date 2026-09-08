@@ -593,16 +593,32 @@ def plan_for(
     # Keyframes scale with length, then hit a ceiling. A cap alone made a
     # one-minute clip pay for 48 keyframes — one every 1.4 seconds — and every
     # per-frame cost downstream (YOLO, CLIP, OCR, the Scenes gallery) with it.
-    max_keyframes = int(min(
-        config.MAX_KEYFRAMES,
-        max(config.MIN_KEYFRAMES, duration / config.KEYFRAME_TARGET_INTERVAL_SEC),
-    ))
     ocr_enabled = config.OCR_ENABLED
-    ocr_max_frames = min(config.OCR_MAX_FRAMES, max_keyframes)
 
-    vision_predicted = _vision_seconds(
-        duration, sampled, max_keyframes, ocr_max_frames if ocr_enabled else 0, profile
+    # One keyframe per KEYFRAME_TARGET_INTERVAL_SEC is what keeps on-screen
+    # material readable; the cap is only there to bound cost. Vision runs
+    # concurrently with ASR, so frames are effectively free until vision
+    # becomes the critical path — spend that slack rather than leaving a long
+    # video with the same handful of frames a short one gets.
+    ideal_keyframes = max(
+        config.MIN_KEYFRAMES, int(duration / config.KEYFRAME_TARGET_INTERVAL_SEC)
     )
+    vision_budget = max(asr_predicted, analyze_budget)
+    max_keyframes = int(min(ideal_keyframes, config.MAX_KEYFRAMES_ABSOLUTE))
+
+    def _vision_at(frames: int) -> float:
+        return _vision_seconds(
+            duration, sampled, frames,
+            min(config.OCR_MAX_FRAMES, frames) if ocr_enabled else 0,
+            profile, cost_override,
+        )
+
+    while max_keyframes > config.MAX_KEYFRAMES and _vision_at(max_keyframes) > vision_budget:
+        max_keyframes = int(max_keyframes * 0.8)
+    max_keyframes = max(max_keyframes, config.MIN_KEYFRAMES)
+
+    ocr_max_frames = min(config.OCR_MAX_FRAMES, max_keyframes)
+    vision_predicted = _vision_at(max_keyframes)
 
     # Vision shares the analyze budget with ASR. If it would become the
     # critical path instead, shed optional work rather than blow the budget.
