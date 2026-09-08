@@ -1,0 +1,43 @@
+# Backend deployment for Render (the frontend goes to Vercel separately).
+#
+# Sizing is not arbitrary. The API loads Whisper, YOLOv8, CLIP, EasyOCR, FAISS
+# and a sentence-transformer into one process — about 4 GB resident — and it
+# transcribes on CPU, so a 43-minute video takes ~6 minutes of real compute.
+# Free and starter tiers (512 MB) cannot hold the models at all: the container
+# is OOM-killed during warm-up, before it ever serves a request.
+#
+#   render.com -> New -> Blueprint -> point at this repo
+#
+# Set GEMINI_API_KEY in the dashboard (sync:false below keeps it out of git),
+# and set VS_CORS_ORIGINS to the Vercel URL once the frontend is deployed.
+
+services:
+  - type: web
+    name: video-summarizer-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard          # 2 GB is already tight; pro (4 GB) is the safe floor
+    healthCheckPath: /api/health
+    # The models take ~40 s to warm; don't let the platform kill the boot.
+    initialDeployHook: ""
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false         # set in the dashboard, never committed
+      - key: VS_CORS_ORIGINS
+        sync: false         # e.g. https://your-app.vercel.app
+      - key: VS_CACHE_DIR
+        value: /data/cache  # the persistent disk below, not the container FS
+      - key: VS_DATA_ROOT
+        value: /data/server_data
+      - key: VS_DATABASE_URL
+        value: sqlite:////data/server_state.db
+      - key: VS_OFFLINE
+        value: "0"          # first boot downloads the model weights
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      # Artifacts per video are large (audio.wav alone is ~115 MB an hour) and
+      # the cache is what makes a re-open instant, so it must outlive a deploy.
+      name: video-cache
+      mountPath: /data
+      sizeGB: 20
