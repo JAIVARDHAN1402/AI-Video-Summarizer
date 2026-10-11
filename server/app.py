@@ -29,7 +29,7 @@ from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from server import auth, config, jobs, schemas, scheduler, storage
@@ -353,6 +353,55 @@ def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
         raise HTTPException(503, "no language model is configured on the server") from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"quiz generation failed: {exc}") from exc
+
+
+@app.get("/api/videos/{video_id}/notes")
+def list_notes(video_id: str) -> list[dict]:
+    from core import notes, pipeline
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    return notes.list_notes(video_id)
+
+
+@app.post("/api/videos/{video_id}/notes", status_code=201)
+def add_note(video_id: str, req: schemas.NoteRequest) -> dict:
+    from core import notes, pipeline
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    try:
+        return notes.add(
+            video_id, req.text, start_sec=req.start_sec, source=req.source
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.put("/api/videos/{video_id}/notes/{note_id}")
+def edit_note(video_id: str, note_id: str, req: schemas.NoteRequest) -> dict:
+    from core import notes
+
+    try:
+        return notes.update(video_id, note_id, req.text)
+    except KeyError as exc:
+        raise HTTPException(404, "note not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+# response_class is explicit because the default JSONResponse always writes a
+# body, and FastAPI asserts that a 204 has none.
+@app.delete("/api/videos/{video_id}/notes/{note_id}", status_code=204,
+            response_class=Response)
+def remove_note(video_id: str, note_id: str) -> Response:
+    from core import notes
+
+    try:
+        notes.delete(video_id, note_id)
+    except KeyError as exc:
+        raise HTTPException(404, "note not found") from exc
+    return Response(status_code=204)
 
 
 @app.get("/api/scheduler/classes")

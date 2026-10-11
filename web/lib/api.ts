@@ -30,6 +30,16 @@ export interface JobView {
   finished_at: string | null;
 }
 
+/** A reader's own note. The only thing in the cache the pipeline never writes. */
+export interface Note {
+  id: string;
+  text: string;
+  created_at: number;
+  edited_at?: number;
+  start_sec: number | null;
+  source: "manual" | "chat" | "explanation";
+}
+
 export interface QuizQuestion {
   question: string;
   options: string[];
@@ -166,6 +176,28 @@ export const api = {
 
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),
+
+  notes: (videoId: string) =>
+    fetch(`/api/videos/${videoId}/notes`).then((r) => j<Note[]>(r)),
+
+  addNote: (videoId: string, text: string, startSec?: number, source = "manual") =>
+    fetch(`/api/videos/${videoId}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, start_sec: startSec ?? null, source }),
+    }).then((r) => j<Note>(r)),
+
+  editNote: (videoId: string, noteId: string, text: string) =>
+    fetch(`/api/videos/${videoId}/notes/${noteId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then((r) => j<Note>(r)),
+
+  deleteNote: async (videoId: string, noteId: string) => {
+    const r = await fetch(`/api/videos/${videoId}/notes/${noteId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+  },
 
   quiz: (videoId: string) =>
     fetch(`/api/videos/${videoId}/quiz`).then((r) => j<QuizDoc>(r)),

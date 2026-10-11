@@ -109,3 +109,14 @@ class VideoResult(BaseModel):
     transcript: Optional[dict[str, Any]] = None
     state: dict[str, Any] = {}
     highlight: Optional[dict[str, Any]] = None  # {url, seconds, scene_ids} when a reel exists
+
+
+class NoteRequest(BaseModel):
+    """A reader's own note. Unlike everything else in the cache this is not
+    derived from the video, so it survives a re-run untouched."""
+
+    text: str = Field(..., min_length=1, max_length=8000)
+    # Where in the video the thought belongs, when it belongs anywhere.
+    start_sec: Optional[float] = None
+    # "manual" when typed, "chat" when saved from an answer.
+    source: str = "manual"

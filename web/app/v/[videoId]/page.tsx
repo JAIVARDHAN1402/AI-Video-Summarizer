@@ -6,6 +6,7 @@ import {
   Clapperboard,
   FileAudio,
   MessageSquare,
+  NotebookPen,
   Sparkles,
   Video,
 } from "lucide-react";
@@ -19,8 +20,9 @@ import { Chat } from "@/components/Chat";
 import { DataTable, Empty, Flashcards, StudyGuide } from "@/components/StudioViews";
 import { MindMap, SlideDeck } from "@/components/Visuals";
 import { Quiz } from "@/components/Quiz";
+import { Notes } from "@/components/Notes";
 
-const TABS = ["Explanation", "Scenes", "Transcript", "Chat"] as const;
+const TABS = ["Explanation", "Scenes", "Transcript", "Chat", "Notes"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_ICON: Record<Tab, React.ReactNode> = {
@@ -28,6 +30,7 @@ const TAB_ICON: Record<Tab, React.ReactNode> = {
   Scenes: <Clapperboard className="h-[15px] w-[15px]" />,
   Transcript: <FileAudio className="h-[15px] w-[15px]" />,
   Chat: <MessageSquare className="h-[15px] w-[15px]" />,
+  Notes: <NotebookPen className="h-[15px] w-[15px]" />,
 };
 
 const STUDIO_TITLE: Record<StudioKind, string> = {
@@ -176,6 +179,8 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
           sourceRef={sourceRef}
           onSeek={onSeek}
         />
+      ) : tab === "Notes" ? (
+        <Notes videoId={videoId} sourceRef={sourceRef} atSec={seek} onSeek={onSeek} />
       ) : tab === "Chat" ? (
         <Chat videoId={videoId} sourceRef={sourceRef} onSeek={onSeek} />
       ) : tab === "Transcript" ? (

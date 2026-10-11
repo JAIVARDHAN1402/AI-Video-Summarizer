@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Sparkles } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Check, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Markdown } from "@/components/Markdown";
@@ -35,12 +35,29 @@ export function Chat({
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<Turn[]>([]);
+  const [saved, setSaved] = useState<Set<number>>(new Set());
   const endRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [history, busy]);
+
+  async function keep(i: number, t: Turn) {
+    try {
+      await api.addNote(
+        videoId,
+        `**${t.q}**
+
+${t.a}`,
+        t.sources?.[0]?.start,
+        "chat",
+      );
+      setSaved((s) => new Set(s).add(i));
+    } catch {
+      /* the Notes tab is the source of truth; a failed save is visible there */
+    }
+  }
 
   async function send(text: string) {
     const question = text.trim();
@@ -131,6 +148,29 @@ export function Chat({
                   <p className="prose-body text-danger">{h.a}</p>
                 ) : (
                   <Markdown>{h.a}</Markdown>
+                )}
+
+                {!h.error && (
+                  <div className="mt-2.5 flex justify-end">
+                    <button
+                      onClick={() => keep(i, h)}
+                      disabled={saved.has(i)}
+                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem] font-medium text-ink-dim transition-colors hover:bg-surface-hover hover:text-ink disabled:text-success disabled:hover:bg-transparent"
+                      title="Keep this answer in your notes"
+                    >
+                      {saved.has(i) ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          Saved to notes
+                        </>
+                      ) : (
+                        <>
+                          <BookmarkPlus className="h-3.5 w-3.5" />
+                          Save to notes
+                        </>
+                      )}
+                    </button>
+                  </div>
                 )}
 
                 {h.sources?.length > 0 && (
