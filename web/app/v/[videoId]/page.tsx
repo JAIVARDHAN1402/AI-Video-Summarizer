@@ -21,6 +21,7 @@ import { DataTable, Empty, Flashcards, StudyGuide } from "@/components/StudioVie
 import { MindMap, SlideDeck } from "@/components/Visuals";
 import { Quiz } from "@/components/Quiz";
 import { Notes } from "@/components/Notes";
+import { Infographic } from "@/components/Infographic";
 
 const TABS = ["Explanation", "Scenes", "Transcript", "Chat", "Notes"] as const;
 type Tab = (typeof TABS)[number];
@@ -76,6 +77,7 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
       "mind-map": chapters.length,
       "data-table": scenes.length,
       "slide-deck": chapters.length,
+      infographic: u ? 1 : 0,
       report: Object.keys(timings).length,
     }),
     [u, chapters, scenes, timings],
@@ -345,6 +347,17 @@ function StudioCanvas({
       return <DataTable scenes={scenes} sourceRef={sourceRef} onSeek={onSeek} />;
     case "slide-deck":
       return <SlideDeck title={title} chapters={chapters} scenes={scenes} onSeek={onSeek} />;
+    case "infographic":
+      return (
+        <Infographic
+          title={title}
+          u={u}
+          scenes={scenes}
+          durationSec={dur}
+          timings={timings}
+          onSeek={onSeek}
+        />
+      );
     case "quiz":
       return (
         <Quiz

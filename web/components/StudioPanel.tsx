@@ -106,8 +106,8 @@ const TILES: Tile[] = [
     label: "Infographic",
     icon: <ImageIcon className="h-[15px] w-[15px]" />,
     tone: "bg-cyan/[0.12] text-cyan",
-    from: "one-page visual",
-    ready: false,
+    from: "one-page visual summary",
+    ready: true,
   },
 ];
 
