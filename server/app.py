@@ -6,6 +6,8 @@ Endpoints
     GET    /api/jobs/{id}            one job's status + progress
     GET    /api/jobs/{id}/events     Server-Sent Events stream of progress
     GET    /api/videos               every processed video in the cache
+    DELETE /api/videos/{video_id}    delete one processed video
+    DELETE /api/videos?confirm=DELETE  empty the library
     GET    /api/chats?scope=...      saved conversations for a video or notebook
     GET    /api/notebooks            sets of videos asked as one
     POST   /api/notebooks/{id}/ask   one question across a notebook
@@ -242,6 +244,62 @@ def list_videos() -> list[dict]:
             }
         )
     return out
+
+
+def _forget_video(video_id: str) -> None:
+    """Remove a video and everything that points at it.
+
+    Deleting only the cache directory leaves two kinds of ghost behind: chat
+    threads scoped to a video that no longer exists, and notebooks listing it
+    as a missing source. Both are cleaned here so "delete" means deleted.
+    """
+    from core import pipeline
+    from server.db import ChatThread, Notebook, session
+
+    pipeline.clear_cache(video_id)
+
+    with session() as db:
+        db.query(ChatThread).filter(ChatThread.scope == f"video:{video_id}").delete()
+        for nb in db.query(Notebook).all():
+            ids = list(nb.video_ids or [])
+            if video_id in ids:
+                nb.video_ids = [v for v in ids if v != video_id]
+        db.commit()
+
+
+@app.delete("/api/videos/{video_id}", status_code=204, response_class=Response)
+def delete_video(video_id: str) -> Response:
+    """Delete one processed video, irreversibly."""
+    from core import pipeline
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    _forget_video(video_id)
+    return Response(status_code=204)
+
+
+@app.delete("/api/videos")
+def clear_library(confirm: str = "") -> dict:
+    """Delete every processed video.
+
+    ``confirm`` must be the literal string "DELETE". A destructive endpoint
+    reachable by a bare DELETE to a collection URL is one stray fetch away
+    from erasing the library, and this costs the caller one query parameter.
+    """
+    from core import pipeline
+
+    if confirm != "DELETE":
+        raise HTTPException(400, 'pass ?confirm=DELETE to empty the library')
+
+    removed = []
+    for vid in pipeline.list_cached_videos():
+        try:
+            _forget_video(vid)
+            removed.append(vid)
+        except Exception:
+            logger.warning("could not remove %s", vid, exc_info=True)
+    logger.info("library cleared: %d videos removed", len(removed))
+    return {"removed": len(removed), "video_ids": removed}
 
 
 @app.get("/api/videos/{video_id}", response_model=schemas.VideoResult)

@@ -53,8 +53,16 @@ def get_cache_dir(video_id: str) -> Path:
     return cache_dir
 
 
-def _artifact_path(video_id: str, name: str) -> Path:
-    return get_cache_dir(video_id) / f"{name}.json"
+def _artifact_path(video_id: str, name: str, *, create: bool = False) -> Path:
+    """Where an artefact lives. Only writers ask for the directory.
+
+    This used to create the directory unconditionally, so merely *looking* for
+    a video left an empty one behind — every 404 on an unknown id, and every
+    read of an artefact that happened not to exist. Those empties then showed
+    up in list_cached_videos() as videos with nothing in them.
+    """
+    base = get_cache_dir(video_id) if create else config.CACHE_ROOT / video_id
+    return base / f"{name}.json"
 
 
 def write_json(
@@ -76,7 +84,7 @@ def write_json(
     other writers in this process, and the retry loop rides out the external
     locks a sync client or antivirus scanner briefly takes on the destination.
     """
-    path = _artifact_path(video_id, name)
+    path = _artifact_path(video_id, name, create=True)
     payload = json.dumps(data, indent=2)
     tmp_path = path.with_suffix(f".json.{os.getpid()}.{threading.get_ident():x}.tmp")
 

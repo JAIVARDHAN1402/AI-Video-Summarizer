@@ -1,6 +1,6 @@
 "use client";
 
-import { Film, Search, Sparkles, Square } from "lucide-react";
+import { Film, Search, Sparkles, Square, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { api, humanDuration, type JobView, type VideoSummary } from "@/lib/api";
@@ -11,6 +11,9 @@ export default function Library() {
   const [err, setErr] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  // Two-step, because emptying the library cannot be undone.
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     // Two sources, deliberately: the cache says what has been processed, the
@@ -29,6 +32,30 @@ export default function Library() {
     const out = needle ? list.filter((v) => v.title.toLowerCase().includes(needle)) : list;
     return [...out].sort((a, b) => b.mtime - a.mtime);
   }, [videos, q]);
+
+  async function removeVideo(id: string) {
+    const before = videos ?? [];
+    setVideos(before.filter((v) => v.video_id !== id));
+    try {
+      await api.deleteVideo(id);
+    } catch (e: any) {
+      setErr(e.message);
+      setVideos(before);
+    }
+  }
+
+  async function clearAll() {
+    setClearing(true);
+    try {
+      await api.clearLibrary();
+      setVideos([]);
+      setConfirmClear(false);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setClearing(false);
+    }
+  }
 
   async function stop(id: string) {
     setStopping(id);
@@ -66,6 +93,38 @@ export default function Library() {
               : `${videos.length} processed video${videos.length === 1 ? "" : "s"}`}
           </p>
         </div>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          {confirmClear ? (
+            <span className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/[0.06] px-3 py-1.5">
+              <span className="text-[0.78rem] text-ink">
+                Delete all {videos?.length ?? 0}? This cannot be undone.
+              </span>
+              <button
+                onClick={clearAll}
+                disabled={clearing}
+                className="btn !border-danger/40 !px-2.5 !py-1 !text-[0.76rem] text-danger hover:bg-danger/[0.1]"
+              >
+                {clearing ? "Deleting…" : "Delete"}
+              </button>
+              <button
+                onClick={() => setConfirmClear(false)}
+                className="btn !px-2.5 !py-1 !text-[0.76rem]"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            videos !== null &&
+            videos.length > 0 && (
+              <button
+                onClick={() => setConfirmClear(true)}
+                className="btn gap-1.5 !px-3 !py-1.5 !text-[0.78rem] text-danger hover:bg-danger/[0.08]"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Empty library
+              </button>
+            )
+          )}
         <div className="relative w-full sm:w-[280px]">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-dim" />
           <input
@@ -74,6 +133,7 @@ export default function Library() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
+        </div>
         </div>
       </div>
 
@@ -148,12 +208,24 @@ export default function Library() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {shown.map((v) => (
-            <Link
+            <div
               key={v.video_id}
-              href={`/v/${v.video_id}`}
-              className="card flex flex-col gap-2 p-4 no-underline transition-all hover:border-border-strong hover:shadow-card-hover"
+              className="card group relative flex flex-col gap-2 p-4 transition-all hover:border-border-strong hover:shadow-card-hover"
             >
-              <p className="line-clamp-2 font-semibold leading-snug text-ink">{v.title}</p>
+              <button
+                onClick={() => removeVideo(v.video_id)}
+                title="Delete this video and everything generated from it"
+                aria-label="Delete this video"
+                className="icon-btn absolute right-2 top-2 !h-7 !w-7 bg-surface opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+              <Link
+                href={`/v/${v.video_id}`}
+                className="line-clamp-2 pr-7 font-semibold leading-snug text-ink no-underline"
+              >
+                {v.title}
+              </Link>
               <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
                 {v.duration_sec ? (
                   <span className="pill">{humanDuration(v.duration_sec)}</span>
@@ -169,7 +241,7 @@ export default function Library() {
                   <span className="pill pill-success">in {humanDuration(v.processed_sec)}</span>
                 ) : null}
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}

@@ -156,3 +156,21 @@ def test_a_rerun_can_still_replace_the_timings():
     cache.write_state(vid, "done", 1.0, "first", extra={"timings": {"total": 10.0}})
     cache.write_state(vid, "done", 1.0, "second", extra={"timings": {"total": 20.0}})
     assert cache.get_state(vid)["timings"] == {"total": 20.0}
+
+
+def test_reading_an_unknown_video_creates_nothing():
+    """A lookup must not leave a directory behind.
+
+    _artifact_path used to create the cache directory for whoever asked, so a
+    404 on an unknown id — or a read of an artefact that happened not to exist
+    — left an empty directory that then appeared in list_cached_videos() as a
+    video with nothing in it.
+    """
+    assert cache.read_json("never-processed", "meta") is None
+    assert not (config.CACHE_ROOT / "never-processed").exists()
+    assert "never-processed" not in cache.list_cached_videos()
+
+
+def test_writing_still_creates_what_it_needs():
+    cache.write_json("fresh-video", "meta", {"title": "x"})
+    assert cache.read_json("fresh-video", "meta") == {"title": "x"}

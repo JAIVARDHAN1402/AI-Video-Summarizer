@@ -1,0 +1,273 @@
+{
+  "exported_at": "2026-10-11T21:58:30",
+  "note": "Snapshot taken before emptying the library. Re-process any of these from source_ref.",
+  "count": 38,
+  "videos": [
+    {
+      "video_id": "02b2c04af266558f",
+      "title": "b94f772069a7479b54c27b50650bccdfb0b75bb573abf8bda27dba1a5af75abd.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\b94f772069a7479b54c27b50650bccdfb0b75bb573abf8bda27dba1a5af75abd.mp4",
+      "duration_sec": 154.551995,
+      "source": "upload"
+    },
+    {
+      "video_id": "046a380d6779af25",
+      "title": "66d6dc7720db2ae750c9c85a7f6a0d55416a9a23ce6ca7d151969501d8606e1c.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\66d6dc7720db2ae750c9c85a7f6a0d55416a9a23ce6ca7d151969501d8606e1c.mp4",
+      "duration_sec": 235.890998,
+      "source": "upload"
+    },
+    {
+      "video_id": "08dde1d74f3d0f7f",
+      "title": "f4370b8fd985c3b41bf5590988669b18794ea64fea3921a8109962a91c324986.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\f4370b8fd985c3b41bf5590988669b18794ea64fea3921a8109962a91c324986.mp4",
+      "duration_sec": 510.235011,
+      "source": "upload"
+    },
+    {
+      "video_id": "14daba4526bc446c",
+      "title": "Best Short Motivational Speech Video - 24 HOURS - 1-Minute Motivation #2",
+      "source_ref": "https://youtu.be/fLeJJPxua3E?si=VdYRLOUyGi9zEjhZ",
+      "duration_sec": 67.754,
+      "source": "youtube"
+    },
+    {
+      "video_id": "26bf8afbcb216ead",
+      "title": "d50d740e77517611ea231e844d409ebdf51e05037ef8cd17a22cd983d2464fc3.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\d50d740e77517611ea231e844d409ebdf51e05037ef8cd17a22cd983d2464fc3.mp4",
+      "duration_sec": 585.862993,
+      "source": "upload"
+    },
+    {
+      "video_id": "29466d21d6ef27c6",
+      "title": "Find Second Largest Element in Array | Remove duplicates from Sorted Array | Arrays Intro Video",
+      "source_ref": "https://youtu.be/37E9ckMDdTk",
+      "duration_sec": 2611.88098,
+      "source": "youtube"
+    },
+    {
+      "video_id": "2f8b60fafec71f7c",
+      "title": "Oprah Winfrey Motivation Speech | This 2 Minute Video Will Change Your Life",
+      "source_ref": "https://youtu.be/nyhRNwTfydU?si=9AgXa2kcs-BsH2BH",
+      "duration_sec": 96.794,
+      "source": "youtube"
+    },
+    {
+      "video_id": "3ed269824ddedb08",
+      "title": "43183ef7f35bfcbc39c122be797fdee5031103862c7c7da3b9ab74d222c79c9d.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\43183ef7f35bfcbc39c122be797fdee5031103862c7c7da3b9ab74d222c79c9d.mp4",
+      "duration_sec": 647.535011,
+      "source": "upload"
+    },
+    {
+      "video_id": "3efb5f3fd822c2e5",
+      "title": "AI Complete OneShot Course | Learn AI & Deep Learning from Scratch",
+      "source_ref": "https://youtu.be/bZxAKA69xqg",
+      "duration_sec": 4879.500266,
+      "source": "youtube"
+    },
+    {
+      "video_id": "475a98fce80ed8a5",
+      "title": "6ffcc966ab00a6096d7b256cffd09408efa7db376df7732644f875b8ff27f390.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\6ffcc966ab00a6096d7b256cffd09408efa7db376df7732644f875b8ff27f390.mp4",
+      "duration_sec": 198.181995,
+      "source": "upload"
+    },
+    {
+      "video_id": "62e40ab076283063",
+      "title": "Operating Systems in One Shot | Semester Exams Preparation | GATE Preparation | RBR",
+      "source_ref": "https://youtu.be/2BayPOKpXiw",
+      "duration_sec": 42065.734,
+      "source": "youtube"
+    },
+    {
+      "video_id": "6b40275c8b5353c4",
+      "title": "7a3daec4c22feace99c4e193ce72e4a3e17bbedd4f0c6feb39e3e9030e6fb05f.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\7a3daec4c22feace99c4e193ce72e4a3e17bbedd4f0c6feb39e3e9030e6fb05f.mp4",
+      "duration_sec": 164.537007,
+      "source": "upload"
+    },
+    {
+      "video_id": "6bccabf4a609849d",
+      "title": "fe77605cdf8c234219ce423a90a93e44e003e55567bdb9bb87a3fb5fec0063cd.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\fe77605cdf8c234219ce423a90a93e44e003e55567bdb9bb87a3fb5fec0063cd.mp4",
+      "duration_sec": 276.317007,
+      "source": "upload"
+    },
+    {
+      "video_id": "7140a2daa1ecb430",
+      "title": "DFIR 101: Digital Forensics Essentials | Kathryn Hedley",
+      "source_ref": "https://youtu.be/eftOgRsHK4A",
+      "duration_sec": 4564.874,
+      "source": "youtube"
+    },
+    {
+      "video_id": "7f206ba91cef8b14",
+      "title": "Container with Most Water Problem | Brute & Optimal Solution | Two Pointer Approach - Leetcode 11",
+      "source_ref": "https://youtu.be/EbkMABpP52U",
+      "duration_sec": 1919.774,
+      "source": "youtube"
+    },
+    {
+      "video_id": "810dff2b199bbf9b",
+      "title": "Operating System 02 | System Calls in One Shot",
+      "source_ref": "https://youtu.be/Mcc_HpQQnjI",
+      "duration_sec": 5258.094,
+      "source": "youtube"
+    },
+    {
+      "video_id": "89acbf9295829f01",
+      "title": "14184d35578cc9e672428f693ae74328ecb54b003d85857ff2afbf8354a90081.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\14184d35578cc9e672428f693ae74328ecb54b003d85857ff2afbf8354a90081.mp4",
+      "duration_sec": 445.961995,
+      "source": "upload"
+    },
+    {
+      "video_id": "9a45ce8854d03aaa",
+      "title": "Mirzapur The Movie | Official Hindi Trailer |Ali Fazal |  Pankaj Tripathi | Divyenndu | 4th Sept",
+      "source_ref": "https://youtu.be/5vMWZhHPlaw?si=xFJzJp9XcqKH2Cb7",
+      "duration_sec": 181.934,
+      "source": "youtube"
+    },
+    {
+      "video_id": "9b1cff0b2dd7f0f6",
+      "title": "b7156368c6b69a3ffc69249b3b54b1449143d531d1feb128019463f346e11428.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\b7156368c6b69a3ffc69249b3b54b1449143d531d1feb128019463f346e11428.mp4",
+      "duration_sec": 157.790967,
+      "source": "upload"
+    },
+    {
+      "video_id": "9e2a512be2f6bbe5",
+      "title": "327f8cd1ff27ecec1de291e396ac7c40521253fa208f2e3c477c5b1e84964f05.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\327f8cd1ff27ecec1de291e396ac7c40521253fa208f2e3c477c5b1e84964f05.mp4",
+      "duration_sec": 110.527007,
+      "source": "upload"
+    },
+    {
+      "video_id": "ae3658880469f8ce",
+      "title": "6. TCS NQT Verbal Ability One Shot 💥 | 100% Repeated PYQs | Real Exam Questions",
+      "source_ref": "https://youtu.be/zj8I6XMrLLI",
+      "duration_sec": 4549.254,
+      "source": "youtube"
+    },
+    {
+      "video_id": "c1a79721d9a9e978",
+      "title": "2779762f2c332931c9fb4e61783b81df6e34b487dc3a94c882781c981e6c4869.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\2779762f2c332931c9fb4e61783b81df6e34b487dc3a94c882781c981e6c4869.mp4",
+      "duration_sec": 167.043991,
+      "source": "upload"
+    },
+    {
+      "video_id": "c2d3e0e156d60131",
+      "title": "82ecca1de0363253060bb3c19e2f5dbd4080bfc0cd790db23c3e73ffd76a602f.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\82ecca1de0363253060bb3c19e2f5dbd4080bfc0cd790db23c3e73ffd76a602f.mp4",
+      "duration_sec": 353.592993,
+      "source": "upload"
+    },
+    {
+      "video_id": "c362b613b6d4de11",
+      "title": "L4. Power Set | Bit Manipulation",
+      "source_ref": "https://youtu.be/LqKaUv1G3_I",
+      "duration_sec": 756.974,
+      "source": "youtube"
+    },
+    {
+      "video_id": "c3a5ff2baec2dd1c",
+      "title": "a66202fe5943daee0a0984fd708ff3126168ded35750c099a54ae67705e1ff3f.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\a66202fe5943daee0a0984fd708ff3126168ded35750c099a54ae67705e1ff3f.mp4",
+      "duration_sec": 450.839002,
+      "source": "upload"
+    },
+    {
+      "video_id": "c3a62cc1b4701209",
+      "title": "63a2f711416d2a911a4f00166fedb7ce01e2eaab18946c0222071322111b961b.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\63a2f711416d2a911a4f00166fedb7ce01e2eaab18946c0222071322111b961b.mp4",
+      "duration_sec": 141.292993,
+      "source": "upload"
+    },
+    {
+      "video_id": "cf9fc33d05b1e88b",
+      "title": "26ec9f71ea771e5601a1f5c963fa425681ae2f86b3dfca483a64d58b5a65feb9.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\26ec9f71ea771e5601a1f5c963fa425681ae2f86b3dfca483a64d58b5a65feb9.mp4",
+      "duration_sec": 405.467007,
+      "source": "upload"
+    },
+    {
+      "video_id": "d22072a03335e0b8",
+      "title": "e293ceb35a8f1ec514707c579ab9b78e678a0c686f895d25945b9a50432c000c.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\e293ceb35a8f1ec514707c579ab9b78e678a0c686f895d25945b9a50432c000c.mp4",
+      "duration_sec": 187.523991,
+      "source": "upload"
+    },
+    {
+      "video_id": "d23ccca6ed28b6cb",
+      "title": "elitmus ph test preparation | mock exam logical ability",
+      "source_ref": "https://youtu.be/PfxXrDYwU9Y?si=AmOsS_lDoUZo6Pk8",
+      "duration_sec": 3999.954,
+      "source": "youtube"
+    },
+    {
+      "video_id": "d2991e65f86bf636",
+      "title": "0e11bb5bb60ac4842b2ee500c9cf985395a083ae92c3f498f1e91f12aa8e1691.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\0e11bb5bb60ac4842b2ee500c9cf985395a083ae92c3f498f1e91f12aa8e1691.mp4",
+      "duration_sec": 98.150998,
+      "source": "upload"
+    },
+    {
+      "video_id": "d2e350de1e9cca98",
+      "title": "d8c2669fbd08e8b2f35ebce82dfe5aa6cbf7e8fbee56df9e971ca12b7dd9e322.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\d8c2669fbd08e8b2f35ebce82dfe5aa6cbf7e8fbee56df9e971ca12b7dd9e322.mp4",
+      "duration_sec": 194.141995,
+      "source": "upload"
+    },
+    {
+      "video_id": "da53e7c38c2b23b1",
+      "title": "Subsets - Backtracking - Leetcode 78",
+      "source_ref": "https://youtu.be/REOH22Xwdkk",
+      "duration_sec": 526.814,
+      "source": "youtube"
+    },
+    {
+      "video_id": "e0120d3fb21bf25f",
+      "title": "811186cdec40ef58049f0cc951c07a9f6f7d2b5cb27511e01094b829bbd10a9e.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\811186cdec40ef58049f0cc951c07a9f6f7d2b5cb27511e01094b829bbd10a9e.mp4",
+      "duration_sec": 230.411995,
+      "source": "upload"
+    },
+    {
+      "video_id": "e01e19c9f7dc4553",
+      "title": "Recursion Part 3 : Backtracking in Detail | Print all Subsets | Subsets II",
+      "source_ref": "https://youtu.be/pNzljlzDCiI",
+      "duration_sec": 2539.574,
+      "source": "youtube"
+    },
+    {
+      "video_id": "e35bba83dbbea800",
+      "title": "c4fb034705c03a890fed5cc46ff79d1e9aef5cd9edec1d22dfe7cc653b5fd98a.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\c4fb034705c03a890fed5cc46ff79d1e9aef5cd9edec1d22dfe7cc653b5fd98a.mp4",
+      "duration_sec": 191.610998,
+      "source": "upload"
+    },
+    {
+      "video_id": "eb7a21038410a7cc",
+      "title": "The Digital Forensic Process | Forensic Fundamentals",
+      "source_ref": "https://youtu.be/gTD8_svzvyw",
+      "duration_sec": 1139.874,
+      "source": "youtube"
+    },
+    {
+      "video_id": "ef8debd07e399ef1",
+      "title": "28f8d4d89a14b30f9066ad5146e8b219c67d45291b9a1588af6d1f6c455acffe.mp4",
+      "source_ref": "C:\\Users\\jaiva\\OneDrive\\Desktop\\Project-1\\Project_Build\\server_data\\uploads\\28f8d4d89a14b30f9066ad5146e8b219c67d45291b9a1588af6d1f6c455acffe.mp4",
+      "duration_sec": 133.306009,
+      "source": "upload"
+    },
+    {
+      "video_id": "ff5410596c36513c",
+      "title": "Linux Tutorial For Beginners | Complete Linux Course for DevOps",
+      "source_ref": "https://youtu.be/ldgl9Bd3lLg",
+      "duration_sec": 8862.074,
+      "source": "youtube"
+    }
+  ]
+}

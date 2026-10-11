@@ -219,6 +219,17 @@ export const api = {
    *  video can exist in the cache without a job row behind it. */
   videos: () => fetch("/api/videos").then((r) => j<VideoSummary[]>(r)),
 
+  deleteVideo: async (videoId: string) => {
+    const r = await fetch(`/api/videos/${videoId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+  },
+
+  /** Irreversible. The server refuses without the confirm token. */
+  clearLibrary: () =>
+    fetch("/api/videos?confirm=DELETE", { method: "DELETE" }).then((r) =>
+      j<{ removed: number; video_ids: string[] }>(r),
+    ),
+
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),
 
