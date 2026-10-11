@@ -431,31 +431,83 @@ function ScenesView({
 }) {
   const hasImportance = scenes.some((s) => typeof s.importance === "number");
   const [byImportance, setByImportance] = useState(false);
+  // Which scene the player is showing. Clicking a frame used to seek only the
+  // narrow Source panel on the far left, which is easy to miss entirely — so
+  // the grid now feeds a player sitting directly above it.
+  const [picked, setPicked] = useState<any | null>(null);
+  const [mode, setMode] = useState<"scene" | "reel">(highlight ? "reel" : "scene");
+
   const ordered = useMemo(() => {
     if (!byImportance) return scenes;
     return [...scenes].sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0));
   }, [scenes, byImportance]);
 
+  function play(s: any) {
+    setPicked(s);
+    setMode("scene");
+    onSeek(s.start); // keep the Source panel on the same moment
+  }
+
   return (
     <div className="flex flex-col gap-5">
-      {highlight && (
-        <section>
-          <SectionHead
-            title="Highlight reel"
-            hint={
-              highlight.seconds
-                ? `${Math.round(highlight.seconds)}s · ${highlight.scene_ids.length} top scenes`
-                : "top scenes by importance"
-            }
-          />
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <video
-            controls
-            src={highlight.url}
-            className="w-full rounded-lg border border-border bg-black"
-          />
-        </section>
-      )}
+      {/* ---- the player the grid feeds ---- */}
+      <section className="sticky top-0 z-10 -mx-5 -mt-5 border-b border-border bg-surface px-5 pb-3.5 pt-5">
+        {highlight && (
+          <div className="mb-2.5 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
+            {([
+              ["reel", "Highlight reel"],
+              ["scene", picked ? `Scene at ${mmss(picked.start)}` : "Scene"],
+            ] as const).map(([m, label]) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                disabled={m === "scene" && !picked}
+                className={`rounded-xs px-3 py-1.5 text-[0.8rem] font-semibold transition-colors disabled:opacity-40 ${
+                  mode === m ? "bg-surface text-ink shadow-card" : "text-ink-dim hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {mode === "reel" && highlight ? (
+          <>
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+            <video
+              controls
+              src={highlight.url}
+              className="w-full rounded-lg border border-border bg-black"
+            />
+            <p className="mt-1.5 text-[0.76rem] text-ink-dim">
+              {highlight.seconds
+                ? `${Math.round(highlight.seconds)}s cut from the ${highlight.scene_ids.length} highest-scoring scenes.`
+                : "The highest-scoring scenes, joined."}{" "}
+              Click any frame below to play that moment instead.
+            </p>
+          </>
+        ) : picked ? (
+          <>
+            <VideoPlayer sourceRef={sourceRef} startSec={picked.start} autoPlay />
+            <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[0.76rem] text-ink-dim">
+              <span className="ts">{mmss(picked.start)}</span>
+              {(picked.objects || []).slice(0, 4).map((o: any, k: number) => (
+                <span key={k}>{o.label}</span>
+              ))}
+              {picked.ocr_text && (
+                <span className="line-clamp-1 min-w-0 flex-1">{picked.ocr_text}</span>
+              )}
+            </p>
+          </>
+        ) : (
+          <div className="grid aspect-video place-items-center rounded-lg border border-dashed border-border-strong bg-surface-raised px-6 text-center">
+            <p className="text-[0.86rem] text-ink-dim">
+              Click any frame below and it plays here, from that moment.
+            </p>
+          </div>
+        )}
+      </section>
 
       {hasImportance && (
         <div className="flex items-center gap-2 text-[0.8rem]">
@@ -490,15 +542,19 @@ function ScenesView({
             // live made it look broken.
             role="button"
             tabIndex={0}
-            onClick={() => onSeek(s.start)}
+            onClick={() => play(s)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                onSeek(s.start);
+                play(s);
               }
             }}
             title={`Play from ${mmss(s.start)}`}
-            className="group/scene cursor-pointer overflow-hidden rounded-lg border border-border bg-surface pb-2 transition-all hover:border-accent/50 hover:shadow-card-hover focus:outline-none focus-visible:border-accent"
+            className={`group/scene cursor-pointer overflow-hidden rounded-lg border bg-surface pb-2 transition-all hover:shadow-card-hover focus:outline-none focus-visible:border-accent ${
+              picked && picked.start === s.start && mode === "scene"
+                ? "border-accent ring-1 ring-accent/40"
+                : "border-border hover:border-accent/50"
+            }`}
           >
             {s.keyframe_url && (
               <div className="relative">
@@ -529,7 +585,7 @@ function ScenesView({
               className="mt-2 flex flex-wrap items-center gap-1.5 px-2.5"
               onClick={(e) => e.stopPropagation()}
             >
-              <Stamp sec={s.start} sourceRef={sourceRef} onSeek={onSeek} />
+              <Stamp sec={s.start} sourceRef={sourceRef} onSeek={() => play(s)} />
               {(s.objects || []).slice(0, 3).map((o: any, k: number) => (
                 <span
                   key={k}

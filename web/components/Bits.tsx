@@ -47,25 +47,33 @@ export function Stamp({
 export function VideoPlayer({
   sourceRef,
   startSec,
+  autoPlay = false,
 }: {
   sourceRef: string;
   startSec: number;
+  /** Set when the reader asked for this exact moment, e.g. by clicking a
+   *  scene. The embed is remounted anyway on every seek, so this only ever
+   *  starts playback the reader just requested. */
+  autoPlay?: boolean;
 }) {
   const id = ytId(sourceRef);
   if (!id) {
     return (
-      <div className="grid aspect-video place-items-center rounded border border-border bg-surface text-[0.85rem] text-ink-dim">
-        Preview not available for this source.
+      <div className="grid aspect-video place-items-center rounded border border-border bg-surface px-4 text-center text-[0.85rem] text-ink-dim">
+        This source has no embeddable player, so scenes cannot be played back here.
       </div>
     );
   }
   return (
-    <div className="relative aspect-video overflow-hidden rounded border border-border">
+    <div className="relative aspect-video overflow-hidden rounded border border-border bg-black">
       <iframe
-        key={startSec}
+        key={`${startSec}-${autoPlay}`}
         className="absolute inset-0 h-full w-full"
-        src={`https://www.youtube.com/embed/${id}?start=${Math.floor(startSec)}&rel=0`}
-        allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture"
+        src={
+          `https://www.youtube.com/embed/${id}?start=${Math.floor(startSec)}&rel=0` +
+          (autoPlay ? "&autoplay=1" : "")
+        }
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
         allowFullScreen
       />
     </div>
