@@ -1,0 +1,54 @@
+# Backend image for Hugging Face Spaces (Docker SDK).
+#
+# Spaces is the one free host found that will actually run this: the API needs
+# ~1.26 GB resident with the models warm, which is already over the 512 MB that
+# most free tiers give, and it needs ffmpeg on the box. Spaces asks for no card.
+#
+# Two things differ from the Render image and are the reason this file exists:
+#
+#   1. Spaces runs the container as uid 1000, not root. Anything the process
+#      writes to — the model cache, the artefact cache, the SQLite file — has
+#      to be owned by that user or the first write fails.
+#   2. Spaces routes to one port declared in the Space's README, not to
+#      whatever the platform injects. 7860 is its default.
+#
+# Storage here is ephemeral: a restart loses processed videos. That is a real
+# limitation of the free tier, not a bug — the pipeline simply re-processes.
+
+FROM python:3.11-slim
+
+RUN useradd -m -u 1000 user
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/home/user \
+    HF_HOME=/home/user/.cache/huggingface \
+    VS_CACHE_DIR=/home/user/cache \
+    VS_DATA_ROOT=/home/user/data \
+    VS_DATABASE_URL=sqlite:////home/user/server_state.db \
+    PORT=7860
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg git curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --chown=user requirements.txt requirements-server.txt ./
+# torch's default Linux wheel bundles ~2.5 GB of CUDA runtime, which is dead
+# weight on a CPU-only Space and slows every cold start. Install the CPU build
+# first so the requirements files resolve against it.
+RUN pip install --upgrade pip && \
+    pip install --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.3.1 torchvision==0.18.1 && \
+    pip install -r requirements.txt -r requirements-server.txt
+
+COPY --chown=user . .
+
+RUN mkdir -p /home/user/cache /home/user/data /home/user/.cache/huggingface && \
+    chown -R user:user /home/user /app
+
+USER user
+
+EXPOSE 7860
+CMD ["python", "-m", "server.main"]
