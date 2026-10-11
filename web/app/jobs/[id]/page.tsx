@@ -94,7 +94,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   }
 
   return (
-    <div className="mx-auto max-w-[720px]">
+    <div className="mx-auto h-full max-w-[760px] overflow-y-auto px-5 py-8">
       <div className="card p-6">
         <div className="mb-1 flex items-center justify-between gap-3">
           <h2 className="m-0 text-[1.1rem] font-semibold">

@@ -184,3 +184,113 @@ a.ts:hover {
   background: var(--scrollbar-hover);
   background-clip: content-box;
 }
+
+/* ===========================================================================
+   Workspace shell — a three-panel studio layout (sources · canvas · studio)
+   rather than a single scrolling column. Panels scroll independently so the
+   video stays put while the explanation moves.
+   ========================================================================= */
+
+.app-shell {
+  @apply flex h-[100dvh] flex-col overflow-hidden;
+}
+
+.topbar {
+  @apply flex h-14 flex-shrink-0 items-center justify-between gap-3 border-b border-border
+    bg-surface/80 px-4 backdrop-blur-xl;
+}
+
+/* <main> is a plain block, so the workspace takes its height explicitly
+   rather than relying on a flex-1 that has no flex parent to grow in. */
+.workspace {
+  @apply flex h-full min-h-0 gap-2 overflow-hidden p-2;
+}
+
+.panel {
+  @apply flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-surface;
+  box-shadow: var(--shadow-card);
+}
+
+.panel-head {
+  @apply flex h-11 flex-shrink-0 items-center justify-between gap-2 border-b border-border px-3;
+}
+.panel-title {
+  @apply flex items-center gap-2 text-[0.82rem] font-semibold tracking-tight text-ink;
+}
+.panel-body {
+  @apply min-h-0 flex-1 overflow-y-auto overscroll-contain;
+}
+
+/* A collapsed panel keeps a narrow rail so it can be brought back. */
+.rail {
+  @apply flex w-11 flex-shrink-0 flex-col items-center gap-3 rounded-xl border border-border
+    bg-surface py-3;
+  box-shadow: var(--shadow-card);
+}
+
+.icon-btn {
+  @apply inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md
+    text-ink-dim transition-colors hover:bg-surface-hover hover:text-ink;
+}
+.icon-btn-active {
+  @apply bg-accent/[0.12] text-accent;
+}
+
+/* --- studio tiles (generate an artefact from the understanding) ----------- */
+.tile {
+  @apply flex items-center gap-2.5 rounded-lg border border-border bg-surface-raised px-3 py-2.5
+    text-left text-[0.82rem] font-semibold text-ink transition-all;
+}
+.tile:hover:not(:disabled) {
+  @apply border-border-strong bg-surface-hover;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card-hover);
+}
+.tile:disabled {
+  @apply cursor-not-allowed opacity-45;
+}
+.tile-icon {
+  @apply grid h-7 w-7 flex-shrink-0 place-items-center rounded-md;
+}
+
+/* --- chat ---------------------------------------------------------------- */
+.bubble-user {
+  @apply ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5
+    text-[0.9rem] leading-relaxed text-white;
+}
+.bubble-ai {
+  @apply max-w-full rounded-2xl rounded-bl-md border border-border bg-surface-raised px-4 py-3;
+}
+
+.composer {
+  @apply flex items-end gap-2 rounded-2xl border border-border-strong bg-surface p-2
+    transition-shadow focus-within:border-accent;
+}
+.composer:focus-within {
+  box-shadow: 0 0 0 3px rgb(var(--c-accent) / 0.16);
+}
+.composer textarea {
+  @apply max-h-40 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2 py-1.5 text-[0.92rem]
+    text-ink outline-none placeholder:text-ink-dim;
+}
+
+/* Thin scrollbars inside panels — the page-level one stays chunky. */
+.panel-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+/* Brand mark gradient, used in the top bar. */
+.brand-mark {
+  @apply grid h-8 w-8 place-items-center rounded-[10px];
+  background: linear-gradient(135deg, rgb(var(--c-accent)), rgb(var(--c-violet)));
+  box-shadow: 0 2px 10px rgb(var(--c-accent) / 0.35);
+}
+
+.skeleton {
+  @apply animate-pulse rounded-md bg-surface-active;
+}
+
+/* Centred reading column for the non-workspace pages. */
+.page-col {
+  @apply mx-auto w-full max-w-[880px] px-5 py-8;
+}

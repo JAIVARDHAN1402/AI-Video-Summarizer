@@ -30,6 +30,19 @@ export interface JobView {
   finished_at: string | null;
 }
 
+/** A row in the library: what the cache knows about one processed video. */
+export interface VideoSummary {
+  video_id: string;
+  title: string;
+  duration_sec: number | null;
+  source_ref: string | null;
+  video_type: string | null;
+  processed_sec: number | null;
+  has_understanding: boolean;
+  has_highlight: boolean;
+  mtime: number;
+}
+
 export interface ExplanationBlock {
   heading: string;
   start_sec: number;
@@ -130,6 +143,10 @@ export const api = {
 
   recentJobs: (limit = 30) =>
     fetch(`/api/jobs?limit=${limit}`).then((r) => j<JobView[]>(r)),
+
+  /** Every processed video on disk — the library's source of truth, since a
+   *  video can exist in the cache without a job row behind it. */
+  videos: () => fetch("/api/videos").then((r) => j<VideoSummary[]>(r)),
 
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),

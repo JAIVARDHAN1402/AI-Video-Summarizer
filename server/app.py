@@ -5,6 +5,7 @@ Endpoints
     GET    /api/jobs                 recent jobs
     GET    /api/jobs/{id}            one job's status + progress
     GET    /api/jobs/{id}/events     Server-Sent Events stream of progress
+    GET    /api/videos               every processed video in the cache
     GET    /api/videos/{video_id}    the finished result (understanding, scenes, ...)
     GET    /api/videos/{video_id}/keyframes/{name}   a keyframe image
     POST   /api/videos/{video_id}/ask                grounded Q&A
@@ -194,6 +195,47 @@ def _ensure_local_artifacts(video_id: str) -> None:
         storage.get_storage().fetch_artifacts(video_id, cache_dir)
     except Exception:
         logger.warning("could not fetch artifacts for %s from storage", video_id, exc_info=True)
+
+
+@app.get("/api/videos")
+def list_videos() -> list[dict]:
+    """Every processed video in the cache, newest first.
+
+    The library used to be assembled from the jobs table alone, which hid any
+    video processed outside that flow — through the Streamlit app, before a
+    database reset, or after the cache moved. The cache is the ground truth
+    for what has actually been processed, so the listing is taken from there
+    and the job row only supplies extras when one happens to exist.
+
+    Only small files are read per video (meta and state); the transcript and
+    understanding documents are left on disk, and their presence is reported
+    as a flag rather than their contents.
+    """
+    import config as core_config
+    from core import pipeline
+
+    out: list[dict] = []
+    for vid in pipeline.list_cached_videos():
+        root = core_config.CACHE_ROOT / vid
+        if not (root / "summary.json").exists():
+            continue  # ingested or part-processed, nothing to show yet
+        meta = pipeline.get_meta(vid) or {}
+        state = pipeline.get_state(vid) or {}
+        timings = state.get("timings") or {}
+        out.append(
+            {
+                "video_id": vid,
+                "title": meta.get("title") or vid,
+                "duration_sec": meta.get("duration_sec"),
+                "source_ref": meta.get("source_ref"),
+                "video_type": meta.get("video_type"),
+                "processed_sec": timings.get("total"),
+                "has_understanding": (root / "understanding.json").exists(),
+                "has_highlight": (root / "highlight.mp4").exists(),
+                "mtime": root.stat().st_mtime,
+            }
+        )
+    return out
 
 
 @app.get("/api/videos/{video_id}", response_model=schemas.VideoResult)

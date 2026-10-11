@@ -56,8 +56,9 @@ export default function Home() {
   }
 
   return (
-    <div>
-      <div className="mx-auto max-w-[640px] pb-9 pt-8 text-center">
+    // The shell no longer scrolls the window, so this page owns its scroll.
+    <div className="h-full overflow-y-auto px-5 pb-20">
+      <div className="mx-auto max-w-[640px] pb-9 pt-10 text-center">
         <span className="pill pill-accent mb-4">AI video understanding</span>
         <h1 className="text-[2.7rem] font-extrabold leading-[1.08] tracking-[-0.02em] text-ink">
           Understand any video

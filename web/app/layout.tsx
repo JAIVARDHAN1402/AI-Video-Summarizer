@@ -24,42 +24,41 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH }} />
       </head>
-      <body>
-        <div className="mx-auto max-w-[1200px] px-5 pb-24 pt-6">
-          <header className="mb-9 flex items-center justify-between gap-4 border-b border-border pb-4">
-            <Link href="/" className="flex items-center gap-3 no-underline">
-              <span className="flex h-9 w-9 items-center justify-center rounded-[9px] bg-accent shadow-[0_2px_8px_rgb(var(--c-accent)/0.30)]">
-                <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none">
-                  <path d="M9 7.5v9l7-4.5-7-4.5z" fill="#fff" />
-                </svg>
-              </span>
-              <div className="leading-tight">
-                <p className="m-0 text-[1.02rem] font-bold tracking-tight text-ink">
-                  AI Video Summarizer
-                </p>
-                <p className="m-0 hidden text-[0.75rem] text-ink-dim sm:block">
-                  Understand any video without watching it
-                </p>
-              </div>
+      {/* The shell owns the viewport height; each page decides whether its
+          content is a scrolling column or a set of independently scrolling
+          panels. Nothing below this point scrolls the window itself. */}
+      <body className="app-shell">
+        <header className="topbar">
+          <Link href="/" className="flex items-center gap-2.5 no-underline">
+            <span className="brand-mark">
+              <svg viewBox="0 0 24 24" className="h-[17px] w-[17px]" fill="none">
+                <path d="M9 7.5v9l7-4.5-7-4.5z" fill="#fff" />
+              </svg>
+            </span>
+            <span className="hidden text-[0.95rem] font-bold tracking-tight text-ink sm:block">
+              AI Video Summarizer
+            </span>
+          </Link>
+
+          <nav className="flex items-center gap-1 text-[0.85rem] font-medium text-ink-muted">
+            <Link
+              href="/"
+              className="rounded-md px-3 py-1.5 no-underline transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              New
             </Link>
-            <nav className="flex items-center gap-2 text-[0.85rem] font-medium text-ink-muted">
-              <Link
-                href="/"
-                className="rounded-sm px-2.5 py-1.5 transition-colors hover:bg-surface-hover hover:text-ink"
-              >
-                New
-              </Link>
-              <Link
-                href="/library"
-                className="rounded-sm px-2.5 py-1.5 transition-colors hover:bg-surface-hover hover:text-ink"
-              >
-                Library
-              </Link>
-              <ThemeToggle />
-            </nav>
-          </header>
-          {children}
-        </div>
+            <Link
+              href="/library"
+              className="rounded-md px-3 py-1.5 no-underline transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              Library
+            </Link>
+            <span className="mx-1 h-5 w-px bg-border" />
+            <ThemeToggle />
+          </nav>
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </body>
     </html>
   );
