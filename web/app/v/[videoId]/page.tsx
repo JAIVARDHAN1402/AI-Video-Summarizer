@@ -190,14 +190,14 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
       ) : tab === "Transcript" ? (
         <TranscriptView segments={transcript} sourceRef={sourceRef} onSeek={onSeek} />
       ) : tab === "Scenes" ? (
-        <div className="panel-body p-5">
-          <ScenesView
-            scenes={scenes}
-            highlight={data.highlight}
-            sourceRef={sourceRef}
-            onSeek={onSeek}
-          />
-        </div>
+        // No panel-body wrapper: Scenes keeps its player out of the scroll
+        // area entirely, so only the grid moves under it.
+        <ScenesView
+          scenes={scenes}
+          highlight={data.highlight}
+          sourceRef={sourceRef}
+          onSeek={onSeek}
+        />
       ) : (
         <div className="panel-body">
           <div className="mx-auto max-w-[820px] p-6">
@@ -449,9 +449,12 @@ function ScenesView({
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      {/* ---- the player the grid feeds ---- */}
-      <section className="sticky top-0 z-10 -mx-5 -mt-5 border-b border-border bg-surface px-5 pb-3.5 pt-5">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* ---- the player the grid feeds ----
+          Sticky with negative margins put this in the same scroll box as the
+          grid, so frames slid out from under it and showed above its top
+          edge. It is a real header now: outside the scroll area entirely. */}
+      <section className="flex-shrink-0 border-b border-border bg-surface px-5 pb-3.5 pt-4">
         {highlight && (
           <div className="mb-2.5 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
             {([
@@ -474,12 +477,14 @@ function ScenesView({
 
         {mode === "reel" && highlight ? (
           <>
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <video
-              controls
-              src={highlight.url}
-              className="w-full rounded-lg border border-border bg-black"
-            />
+            <div className="mx-auto w-full max-w-[calc(40vh*16/9)]">
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <video
+                controls
+                src={highlight.url}
+                className="w-full rounded-lg border border-border bg-black"
+              />
+            </div>
             <p className="mt-1.5 text-[0.76rem] text-ink-dim">
               {highlight.seconds
                 ? `${Math.round(highlight.seconds)}s cut from the ${highlight.scene_ids.length} highest-scoring scenes.`
@@ -489,7 +494,9 @@ function ScenesView({
           </>
         ) : picked ? (
           <>
-            <VideoPlayer sourceRef={sourceRef} startSec={picked.start} autoPlay />
+            <div className="mx-auto w-full max-w-[calc(40vh*16/9)]">
+              <VideoPlayer sourceRef={sourceRef} startSec={picked.start} autoPlay />
+            </div>
             <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[0.76rem] text-ink-dim">
               <span className="ts">{mmss(picked.start)}</span>
               {(picked.objects || []).slice(0, 4).map((o: any, k: number) => (
@@ -501,7 +508,7 @@ function ScenesView({
             </p>
           </>
         ) : (
-          <div className="grid aspect-video place-items-center rounded-lg border border-dashed border-border-strong bg-surface-raised px-6 text-center">
+          <div className="mx-auto grid aspect-video w-full max-w-[calc(40vh*16/9)] place-items-center rounded-lg border border-dashed border-border-strong bg-surface-raised px-6 text-center">
             <p className="text-[0.86rem] text-ink-dim">
               Click any frame below and it plays here, from that moment.
             </p>
@@ -509,8 +516,9 @@ function ScenesView({
         )}
       </section>
 
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
       {hasImportance && (
-        <div className="flex items-center gap-2 text-[0.8rem]">
+        <div className="mb-4 flex items-center gap-2 text-[0.8rem]">
           <span className="text-ink-dim">Order</span>
           <div className="flex gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
             {[
@@ -602,6 +610,7 @@ function ScenesView({
             )}
           </div>
         ))}
+      </div>
       </div>
     </div>
   );

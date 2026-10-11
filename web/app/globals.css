@@ -75,7 +75,10 @@ body {
   @apply bg-bg text-ink font-sans antialiased;
   background-image: var(--page-wash);
   background-repeat: no-repeat;
-  min-height: 100vh;
+  /* No min-height here. .app-shell sets the height, and a 100vh floor fights
+     it: vh ignores a horizontal scrollbar, so the body ends up taller than
+     the viewport by the scrollbar's height, the window scrolls, and the chat
+     composer is pushed below the fold. */
 }
 
 ::selection {
