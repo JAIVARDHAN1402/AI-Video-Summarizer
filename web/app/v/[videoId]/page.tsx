@@ -7,11 +7,12 @@ import {
   FileAudio,
   MessageSquare,
   NotebookPen,
+  Play,
   Sparkles,
   Video,
 } from "lucide-react";
 import { use, useEffect, useMemo, useState } from "react";
-import { api, humanDuration, type VideoResult } from "@/lib/api";
+import { api, humanDuration, mmss, type VideoResult } from "@/lib/api";
 import { SectionHead, Stamp, VideoPlayer } from "@/components/Bits";
 import { UnderstandingView } from "@/components/UnderstandingView";
 import { Workspace } from "@/components/Workspace";
@@ -484,16 +485,36 @@ function ScenesView({
         {ordered.map((s: any, i: number) => (
           <div
             key={i}
-            className="overflow-hidden rounded-lg border border-border bg-surface pb-2 transition-colors hover:border-border-strong"
+            // The whole card seeks, not just its timestamp: a grid of frames
+            // reads as something you click, and only the small stamp being
+            // live made it look broken.
+            role="button"
+            tabIndex={0}
+            onClick={() => onSeek(s.start)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSeek(s.start);
+              }
+            }}
+            title={`Play from ${mmss(s.start)}`}
+            className="group/scene cursor-pointer overflow-hidden rounded-lg border border-border bg-surface pb-2 transition-all hover:border-accent/50 hover:shadow-card-hover focus:outline-none focus-visible:border-accent"
           >
             {s.keyframe_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={s.keyframe_url}
-                alt=""
-                loading="lazy"
-                className="aspect-video w-full object-cover"
-              />
+              <div className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={s.keyframe_url}
+                  alt=""
+                  loading="lazy"
+                  className="aspect-video w-full object-cover"
+                />
+                <span className="absolute inset-0 grid place-items-center bg-black/35 opacity-0 transition-opacity group-hover/scene:opacity-100">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-white/90">
+                    <Play className="ml-0.5 h-4 w-4 text-black" fill="currentColor" />
+                  </span>
+                </span>
+              </div>
             )}
             {typeof s.importance === "number" && (
               <div className="h-1 w-full bg-surface-active">
@@ -504,7 +525,10 @@ function ScenesView({
                 />
               </div>
             )}
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 px-2.5">
+            <div
+              className="mt-2 flex flex-wrap items-center gap-1.5 px-2.5"
+              onClick={(e) => e.stopPropagation()}
+            >
               <Stamp sec={s.start} sourceRef={sourceRef} onSeek={onSeek} />
               {(s.objects || []).slice(0, 3).map((o: any, k: number) => (
                 <span

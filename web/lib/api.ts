@@ -30,6 +30,17 @@ export interface JobView {
   finished_at: string | null;
 }
 
+/** A saved conversation. The list view omits `turns`. */
+export interface ChatThread {
+  id: string;
+  scope: string;
+  title: string;
+  turn_count: number;
+  turns?: any[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface NotebookVideo {
   video_id: string;
   title: string;
@@ -210,6 +221,31 @@ export const api = {
 
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),
+
+  /** scope is "video:<id>" or "notebook:<id>". */
+  chats: (scope: string) =>
+    fetch(`/api/chats?scope=${encodeURIComponent(scope)}`).then((r) => j<ChatThread[]>(r)),
+
+  chat: (id: string) => fetch(`/api/chats/${id}`).then((r) => j<ChatThread>(r)),
+
+  createChat: (scope: string, title: string, turns: any[] = []) =>
+    fetch("/api/chats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, title, turns }),
+    }).then((r) => j<ChatThread>(r)),
+
+  saveChat: (id: string, patch: { title?: string; turns?: any[] }) =>
+    fetch(`/api/chats/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => j<ChatThread>(r)),
+
+  deleteChat: async (id: string) => {
+    const r = await fetch(`/api/chats/${id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+  },
 
   notebooks: () => fetch("/api/notebooks").then((r) => j<Notebook[]>(r)),
 

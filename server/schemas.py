@@ -128,3 +128,12 @@ class NotebookRequest(BaseModel):
 
     title: Optional[str] = Field(None, max_length=200)
     video_ids: Optional[list[str]] = None
+
+
+class ChatThreadRequest(BaseModel):
+    """Create or save a conversation. Fields are optional on save so a rename
+    need not resend every turn."""
+
+    scope: Optional[str] = Field(None, max_length=64)
+    title: Optional[str] = Field(None, max_length=200)
+    turns: Optional[list[dict[str, Any]]] = None

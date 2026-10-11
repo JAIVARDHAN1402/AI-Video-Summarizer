@@ -6,6 +6,7 @@ Endpoints
     GET    /api/jobs/{id}            one job's status + progress
     GET    /api/jobs/{id}/events     Server-Sent Events stream of progress
     GET    /api/videos               every processed video in the cache
+    GET    /api/chats?scope=...      saved conversations for a video or notebook
     GET    /api/notebooks            sets of videos asked as one
     POST   /api/notebooks/{id}/ask   one question across a notebook
     GET    /api/videos/{video_id}    the finished result (understanding, scenes, ...)
@@ -356,6 +357,92 @@ def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
         raise HTTPException(503, "no language model is configured on the server") from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"quiz generation failed: {exc}") from exc
+
+
+# --- chat threads: conversations that outlive the page -----------------------
+
+
+@app.get("/api/chats")
+def list_chats(scope: str) -> list[dict]:
+    """Threads for one scope, newest first, without their turns.
+
+    The list is a sidebar; loading every message of every past conversation to
+    render a list of titles would be the expensive way to draw nothing.
+    """
+    from server.db import ChatThread, session
+
+    with session() as db:
+        rows = (
+            db.query(ChatThread)
+            .filter(ChatThread.scope == scope)
+            .order_by(ChatThread.updated_at.desc())
+            .all()
+        )
+        return [t.to_dict(with_turns=False) for t in rows]
+
+
+@app.get("/api/chats/{thread_id}")
+def get_chat(thread_id: str) -> dict:
+    from server.db import ChatThread, session
+
+    with session() as db:
+        t = db.get(ChatThread, thread_id)
+        if t is None:
+            raise HTTPException(404, "chat not found")
+        return t.to_dict()
+
+
+@app.post("/api/chats", status_code=201)
+def create_chat(req: schemas.ChatThreadRequest) -> dict:
+    from server.db import ChatThread, session
+
+    if not req.scope:
+        raise HTTPException(400, "a chat needs a scope")
+    with session() as db:
+        t = ChatThread(
+            scope=req.scope,
+            title=(req.title or "New chat").strip()[:200],
+            turns=req.turns or [],
+        )
+        db.add(t)
+        db.commit()
+        db.refresh(t)
+        return t.to_dict()
+
+
+@app.put("/api/chats/{thread_id}")
+def save_chat(thread_id: str, req: schemas.ChatThreadRequest) -> dict:
+    """Replace a thread's turns. Called after each exchange, so a reload or a
+    tab switch never loses the conversation."""
+    import datetime as _dt
+
+    from server.db import ChatThread, session
+
+    with session() as db:
+        t = db.get(ChatThread, thread_id)
+        if t is None:
+            raise HTTPException(404, "chat not found")
+        if req.turns is not None:
+            t.turns = req.turns
+        if req.title is not None:
+            t.title = req.title.strip()[:200] or "New chat"
+        t.updated_at = _dt.datetime.now(_dt.timezone.utc)
+        db.commit()
+        db.refresh(t)
+        return t.to_dict()
+
+
+@app.delete("/api/chats/{thread_id}", status_code=204, response_class=Response)
+def delete_chat(thread_id: str) -> Response:
+    from server.db import ChatThread, session
+
+    with session() as db:
+        t = db.get(ChatThread, thread_id)
+        if t is None:
+            raise HTTPException(404, "chat not found")
+        db.delete(t)
+        db.commit()
+    return Response(status_code=204)
 
 
 # --- notebooks: several videos asked as one body of material -----------------

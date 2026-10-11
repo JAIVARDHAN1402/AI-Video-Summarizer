@@ -165,6 +165,48 @@ class Notebook(Base):
         }
 
 
+class ChatThread(Base):
+    """One saved conversation, about a video or about a notebook.
+
+    ``scope`` is "video:<id>" or "notebook:<id>" rather than two nullable
+    foreign keys, because a thread belongs to exactly one of them and the
+    alternative is a table where half the columns are always empty. It is
+    indexed because listing a scope's threads is the only query made of it.
+
+    Turns are stored whole as JSON. They are written as a unit after each
+    exchange and never queried field by field, so normalising them into rows
+    would buy nothing and cost a join on every read.
+    """
+
+    __tablename__ = "chat_threads"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=lambda: uuid.uuid4().hex[:12]
+    )
+    scope: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(200), default="New chat")
+    turns: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+    def to_dict(self, *, with_turns: bool = True) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "scope": self.scope,
+            "title": self.title,
+            "turn_count": len(self.turns or []),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+        if with_turns:
+            out["turns"] = list(self.turns or [])
+        return out
+
+
 class SchedulerCost(Base):
     """One learned cost figure for a (worker class, metric) pair.
 
