@@ -9,6 +9,8 @@ Endpoints
     GET    /api/videos/{video_id}    the finished result (understanding, scenes, ...)
     GET    /api/videos/{video_id}/keyframes/{name}   a keyframe image
     POST   /api/videos/{video_id}/ask                grounded Q&A
+    GET    /api/videos/{video_id}/quiz               the cached quiz, if any
+    POST   /api/videos/{video_id}/quiz               generate one
     GET    /api/health
 
 Auth is not wired here — a real deployment puts a JWT / Clerk middleware in
@@ -314,6 +316,43 @@ def ask(video_id: str, req: schemas.AskRequest) -> schemas.AskResponse:
         beyond_video=bool(result.get("beyond_video")),
         off_topic=bool(result.get("off_topic")),
     )
+
+
+@app.get("/api/videos/{video_id}/quiz")
+def get_quiz(video_id: str) -> dict:
+    """The cached quiz, or 204 if none has been generated for this video yet.
+
+    Deliberately not a 404: "no quiz yet" is the normal state, and the client
+    distinguishes it from "this video does not exist".
+    """
+    from core import pipeline, quiz
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    cached = quiz.get(video_id)
+    return cached or {"questions": [], "available": quiz.is_available()}
+
+
+@app.post("/api/videos/{video_id}/quiz")
+def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
+    """Generate a quiz from the video's understanding document.
+
+    Runs inline rather than on the worker queue: it is one LLM call over a
+    document that is already summarised, so it finishes in seconds, and the
+    reader is sitting in front of it waiting.
+    """
+    from core import llm, pipeline, quiz
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    try:
+        return quiz.generate(video_id, count=count, force=force)
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except llm.LLMUnavailable as exc:
+        raise HTTPException(503, "no language model is configured on the server") from exc
+    except llm.LLMError as exc:
+        raise HTTPException(502, f"quiz generation failed: {exc}") from exc
 
 
 @app.get("/api/scheduler/classes")

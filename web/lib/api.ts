@@ -30,6 +30,22 @@ export interface JobView {
   finished_at: string | null;
 }
 
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correct_index: number;
+  explanation: string;
+  start_sec: number;
+  difficulty: "easy" | "medium" | "hard";
+}
+export interface QuizDoc {
+  questions: QuizQuestion[];
+  model?: string;
+  generated_in_sec?: number;
+  /** false when the server has no language model configured at all. */
+  available?: boolean;
+}
+
 /** A row in the library: what the cache knows about one processed video. */
 export interface VideoSummary {
   video_id: string;
@@ -150,6 +166,15 @@ export const api = {
 
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),
+
+  quiz: (videoId: string) =>
+    fetch(`/api/videos/${videoId}/quiz`).then((r) => j<QuizDoc>(r)),
+
+  /** `force` writes a fresh set over the cached one. */
+  makeQuiz: (videoId: string, count = 10, force = false) =>
+    fetch(`/api/videos/${videoId}/quiz?count=${count}&force=${force}`, {
+      method: "POST",
+    }).then((r) => j<QuizDoc>(r)),
 
   ask: (videoId: string, question: string, history: AskTurn[] = []) =>
     fetch(`/api/videos/${videoId}/ask`, {

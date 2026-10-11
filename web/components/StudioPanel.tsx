@@ -90,8 +90,8 @@ const TILES: Tile[] = [
     label: "Quiz",
     icon: <ListChecks className="h-[15px] w-[15px]" />,
     tone: "bg-accent/[0.12] text-accent",
-    from: "generated from the video",
-    ready: false,
+    from: "written from the explanation",
+    ready: true,
   },
   {
     kind: "audio",
@@ -137,7 +137,7 @@ export function StudioPanel({
       <div className="flex flex-col gap-1.5">
         {TILES.map((t) => {
           const n = counts[t.kind];
-          const empty = t.ready && n === 0;
+          const empty = t.ready && t.kind !== "quiz" && n === 0;
           return (
             <button
               key={t.kind}

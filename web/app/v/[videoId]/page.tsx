@@ -18,6 +18,7 @@ import { StudioPanel, type StudioKind } from "@/components/StudioPanel";
 import { Chat } from "@/components/Chat";
 import { DataTable, Empty, Flashcards, StudyGuide } from "@/components/StudioViews";
 import { MindMap, SlideDeck } from "@/components/Visuals";
+import { Quiz } from "@/components/Quiz";
 
 const TABS = ["Explanation", "Scenes", "Transcript", "Chat"] as const;
 type Tab = (typeof TABS)[number];
@@ -339,6 +340,15 @@ function StudioCanvas({
       return <DataTable scenes={scenes} sourceRef={sourceRef} onSeek={onSeek} />;
     case "slide-deck":
       return <SlideDeck title={title} chapters={chapters} scenes={scenes} onSeek={onSeek} />;
+    case "quiz":
+      return (
+        <Quiz
+          videoId={data.video_id}
+          hasUnderstanding={!!u}
+          sourceRef={sourceRef}
+          onSeek={onSeek}
+        />
+      );
     case "report":
       return (
         <div className="panel-body p-6">
