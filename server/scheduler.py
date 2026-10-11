@@ -4,7 +4,8 @@ The single-machine planner in ``core.perf`` chooses model sizes to fit a
 wall-clock budget on the box that happens to be planning. This module lifts
 that to a fleet: given a job and its SLA, it predicts the cost on **every
 registered worker class** using a cost model calibrated separately per class,
-routes the job to the cheapest class that still meets the SLA, and — once the
+routes the job to the cheapest class that still meets the SLA — cost being
+predicted wall-clock multiplied by that class's hourly rate — and, once the
 job finishes — folds its real wall-clock back into that class's model.
 
 That feedback loop is the point. A brand-new GPU node starts with a rough seed
@@ -26,6 +27,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -45,6 +47,12 @@ _ROUTING_KEY = "total:per_min"
 # Rough seed for a class with no measurements yet, relative to a CPU-only box.
 _GPU_SEED_FACTOR = 0.18
 
+# Default hourly rates behind WorkerClass.rate_per_hour. Only their ratio
+# affects routing, so these are shaped like cloud pricing rather than quoted
+# from a provider; override per class with cost_per_hour in VS_WORKER_CLASSES.
+_CPU_CORE_HOUR = float(os.getenv("VS_COST_PER_CORE_HOUR", "0.012"))
+_GPU_HOUR = float(os.getenv("VS_COST_PER_GPU_HOUR", "0.60"))
+
 # Below this many seconds of work per video-minute, a run cannot have decoded,
 # transcribed and analysed the video — it was served from cache. Even a GPU
 # class does not approach it end to end.
@@ -61,11 +69,38 @@ class WorkerClass:
     name: str
     has_gpu: bool = False
     seed_per_min: Optional[float] = None  # sec of processing per video-minute
+    cost_per_hour: Optional[float] = None  # what an hour on this class costs
 
     def default_seed(self, cpu_reference_per_min: float) -> float:
         if self.seed_per_min is not None:
             return self.seed_per_min
         return cpu_reference_per_min * (_GPU_SEED_FACTOR if self.has_gpu else 1.0)
+
+    @property
+    def cores(self) -> int:
+        """Cores implied by the class name, e.g. ``cpu-16core`` -> 16.
+
+        Class names are the fleet's own vocabulary and already encode this;
+        parsing them avoids a second place to keep in sync.
+        """
+        m = re.search(r"(\d+)\s*core", self.name)
+        return int(m.group(1)) if m else 1
+
+    def rate_per_hour(self) -> float:
+        """What an hour of this class costs, relative to the others.
+
+        Only the ratios matter for routing — doubling every rate changes no
+        decision — so the defaults are shaped like cloud pricing (a machine
+        costs roughly in proportion to the cores it holds, and an accelerator
+        is a large flat premium) rather than quoted from any one provider.
+        An explicit ``cost_per_hour`` in VS_WORKER_CLASSES overrides this.
+        """
+        if self.cost_per_hour is not None:
+            return max(self.cost_per_hour, 1e-6)
+        rate = self.cores * _CPU_CORE_HOUR
+        if self.has_gpu:
+            rate += _GPU_HOUR
+        return max(rate, 1e-6)
 
 
 @dataclass
@@ -76,6 +111,11 @@ class ClassPrediction:
     from_measurement: bool           # True once the class has real data
     samples: int = 0                 # completed jobs feeding this class's model
     plan: dict[str, Any] = field(default_factory=dict)
+    # What running this job on this class is predicted to cost. The fast class
+    # is not automatically the expensive one: it finishes sooner, so a quick
+    # run on a large machine can undercut a long one on a small machine.
+    cost: float = 0.0
+    rate_per_hour: float = 0.0
 
 
 @dataclass
@@ -98,6 +138,8 @@ class RoutingDecision:
                 {
                     "worker_class": a.worker_class,
                     "predicted_sec": round(a.predicted_sec, 1),
+                    "cost": round(a.cost, 5),
+                    "rate_per_hour": round(a.rate_per_hour, 4),
                     "meets_sla": a.meets_sla,
                     "from_measurement": a.from_measurement,
                 }
@@ -119,6 +161,7 @@ def _registry() -> dict[str, WorkerClass]:
                     name=str(entry["name"]),
                     has_gpu=bool(entry.get("has_gpu", False)),
                     seed_per_min=entry.get("seed_per_min"),
+                    cost_per_hour=entry.get("cost_per_hour"),
                 )
                 classes[wc.name] = wc
         except Exception:
@@ -200,15 +243,23 @@ def route(
             samples = 0
             from_measurement = False
         predicted = per_min * duration_min
+        rate = wc.rate_per_hour()
         predictions.append(ClassPrediction(
             worker_class=wc.name,
             predicted_sec=predicted,
             meets_sla=predicted <= sla_target_sec,
             from_measurement=from_measurement,
             samples=samples,
+            rate_per_hour=rate,
+            cost=(predicted / 3600.0) * rate,
         ))
 
-    # Explore, then exploit — but never at the SLA's expense.
+    # Explore, then exploit — but never at the SLA's expense, and among the
+    # classes that keep the promise, take the cheapest rather than the fastest.
+    #
+    # Choosing the fastest class that meets the SLA wastes the whole point of
+    # having a deadline: if a smaller, cheaper machine also finishes in time,
+    # the headroom bought by the larger one is paid for and never used.
     #
     # A class with no measurements has only a seed estimate, too crude to route
     # on or to rule out, so probe it once. Beyond that, pure exploitation is a
@@ -216,19 +267,23 @@ def route(
     # stale, and the router is deciding on numbers it can no longer check. So a
     # class that is still thinly measured is preferred *while it is itself
     # predicted to meet the SLA* — exploration that cannot break the promise.
-    # Only if nothing meets the SLA do we fall back to the fastest overall.
+    # Only if nothing meets the SLA is the deadline already lost, and then the
+    # fastest class is the right answer: it limits how far the miss goes.
     unsampled = [p for p in predictions if p.samples == 0]
     within = [p for p in predictions if p.meets_sla]
     under_measured = [p for p in within if p.samples < _EXPLORE_MIN_SAMPLES]
 
+    by_cost = lambda p: (p.cost, p.predicted_sec, p.worker_class)  # noqa: E731
+    by_speed = lambda p: (p.predicted_sec, p.worker_class)         # noqa: E731
+
     if unsampled:
-        chosen = min(unsampled, key=lambda p: (p.predicted_sec, p.worker_class))
+        chosen = min(unsampled, key=by_cost)
     elif under_measured:
-        chosen = min(under_measured, key=lambda p: (p.samples, p.predicted_sec, p.worker_class))
+        chosen = min(under_measured, key=lambda p: (p.samples, *by_cost(p)))
     elif within:
-        chosen = min(within, key=lambda p: (p.predicted_sec, p.worker_class))
+        chosen = min(within, key=by_cost)
     else:
-        chosen = min(predictions, key=lambda p: (p.predicted_sec, p.worker_class))
+        chosen = min(predictions, key=by_speed)
 
     # Attach the concrete execution plan the worker should use, computed with
     # that class's cost model so the model choices match its real speed.
@@ -241,9 +296,9 @@ def route(
     chosen.plan = perf.plan_to_dict(plan)
 
     logger.info(
-        "routed %d-min %s job -> %s (predicted %.0fs, SLA %.0fs, %s)",
+        "routed %d-min %s job -> %s (predicted %.0fs, cost %.4f, SLA %.0fs, %s)",
         duration_min, video_type, chosen.worker_class,
-        chosen.predicted_sec, sla_target_sec,
+        chosen.predicted_sec, chosen.cost, sla_target_sec,
         "OK" if chosen.meets_sla else "OVER",
     )
     return RoutingDecision(
