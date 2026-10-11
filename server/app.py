@@ -9,6 +9,7 @@ Endpoints
     GET    /api/videos/{video_id}    the finished result (understanding, scenes, ...)
     GET    /api/videos/{video_id}/keyframes/{name}   a keyframe image
     POST   /api/videos/{video_id}/ask                grounded Q&A
+    GET    /api/videos/{video_id}/audio-overview     two-host audio conversation
     GET    /api/videos/{video_id}/quiz               the cached quiz, if any
     POST   /api/videos/{video_id}/quiz               generate one
     GET    /api/health
@@ -353,6 +354,57 @@ def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
         raise HTTPException(503, "no language model is configured on the server") from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"quiz generation failed: {exc}") from exc
+
+
+@app.get("/api/videos/{video_id}/audio-overview")
+def get_audio_overview(video_id: str) -> dict:
+    """The cached overview's script and timings, or an empty shell.
+
+    As with the quiz, "not made yet" is the normal state and is reported as
+    data rather than as a 404.
+    """
+    from core import audio_overview, pipeline
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    doc = audio_overview.get(video_id)
+    if doc:
+        return {**doc, "url": f"/api/videos/{video_id}/audio-overview/audio"}
+    return {"turns": [], "available": audio_overview.is_available()}
+
+
+@app.post("/api/videos/{video_id}/audio-overview")
+def make_audio_overview(video_id: str, force: bool = False) -> dict:
+    """Write, speak and assemble a two-host conversation about the video.
+
+    Runs inline. It takes the better part of a minute — one model call for the
+    script, then a few seconds of concurrent speech synthesis per turn — which
+    is long for a request but far simpler than a second queue, and the reader
+    is waiting on it with nothing else to do.
+    """
+    from core import audio_overview, llm, pipeline
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    try:
+        doc = audio_overview.generate(video_id, force=force)
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except llm.LLMUnavailable as exc:
+        raise HTTPException(503, "no language model is configured on the server") from exc
+    except (llm.LLMError, RuntimeError) as exc:
+        raise HTTPException(502, f"audio overview failed: {exc}") from exc
+    return {**doc, "url": f"/api/videos/{video_id}/audio-overview/audio"}
+
+
+@app.get("/api/videos/{video_id}/audio-overview/audio")
+def audio_overview_file(video_id: str) -> FileResponse:
+    from core import audio_overview
+
+    path = audio_overview.audio_path(video_id)
+    if not path.exists():
+        raise HTTPException(404, "no audio overview for this video")
+    return FileResponse(path, media_type="audio/mpeg", filename="audio-overview.mp3")
 
 
 @app.get("/api/videos/{video_id}/notes")

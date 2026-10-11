@@ -40,6 +40,23 @@ export interface Note {
   source: "manual" | "chat" | "explanation";
 }
 
+export interface AudioTurn {
+  speaker: "HOST_A" | "HOST_B";
+  text: string;
+  start_sec: number;
+  end_sec: number;
+}
+export interface AudioOverviewDoc {
+  turns: AudioTurn[];
+  /** Absent until an overview has actually been built. */
+  url?: string;
+  duration_sec?: number;
+  model?: string;
+  generated_in_sec?: number;
+  /** false when the server lacks a model or ffmpeg. */
+  available?: boolean;
+}
+
 export interface QuizQuestion {
   question: string;
   options: string[];
@@ -198,6 +215,15 @@ export const api = {
     const r = await fetch(`/api/videos/${videoId}/notes/${noteId}`, { method: "DELETE" });
     if (!r.ok) throw new Error(`Delete failed (${r.status})`);
   },
+
+  audioOverview: (videoId: string) =>
+    fetch(`/api/videos/${videoId}/audio-overview`).then((r) => j<AudioOverviewDoc>(r)),
+
+  /** Writes the script and speaks it; takes around a minute. */
+  makeAudioOverview: (videoId: string, force = false) =>
+    fetch(`/api/videos/${videoId}/audio-overview?force=${force}`, { method: "POST" }).then(
+      (r) => j<AudioOverviewDoc>(r),
+    ),
 
   quiz: (videoId: string) =>
     fetch(`/api/videos/${videoId}/quiz`).then((r) => j<QuizDoc>(r)),

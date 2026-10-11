@@ -98,8 +98,8 @@ const TILES: Tile[] = [
     label: "Audio Overview",
     icon: <AudioLines className="h-[15px] w-[15px]" />,
     tone: "bg-violet/[0.12] text-violet",
-    from: "two-host discussion",
-    ready: false,
+    from: "two voices, ~5 minutes",
+    ready: true,
   },
   {
     kind: "infographic",
@@ -137,7 +137,7 @@ export function StudioPanel({
       <div className="flex flex-col gap-1.5">
         {TILES.map((t) => {
           const n = counts[t.kind];
-          const empty = t.ready && t.kind !== "quiz" && n === 0;
+          const empty = t.ready && !["quiz", "audio"].includes(t.kind) && n === 0;
           return (
             <button
               key={t.kind}

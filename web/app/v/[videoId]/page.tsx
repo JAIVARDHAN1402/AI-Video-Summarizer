@@ -22,6 +22,7 @@ import { MindMap, SlideDeck } from "@/components/Visuals";
 import { Quiz } from "@/components/Quiz";
 import { Notes } from "@/components/Notes";
 import { Infographic } from "@/components/Infographic";
+import { AudioOverview } from "@/components/AudioOverview";
 
 const TABS = ["Explanation", "Scenes", "Transcript", "Chat", "Notes"] as const;
 type Tab = (typeof TABS)[number];
@@ -358,6 +359,8 @@ function StudioCanvas({
           onSeek={onSeek}
         />
       );
+    case "audio":
+      return <AudioOverview videoId={data.video_id} hasUnderstanding={!!u} />;
     case "quiz":
       return (
         <Quiz
