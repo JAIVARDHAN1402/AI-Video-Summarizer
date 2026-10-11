@@ -1,8 +1,25 @@
 "use client";
 
+import {
+  ArrowRight,
+  AudioLines,
+  Clock,
+  Layers,
+  ListChecks,
+  Network,
+  Sparkles,
+  Upload,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { api, type Profile, type VideoType } from "@/lib/api";
+import { useEffect, useState } from "react";
+import {
+  api,
+  humanDuration,
+  type Profile,
+  type VideoSummary,
+  type VideoType,
+} from "@/lib/api";
 
 const VIDEO_TYPES: { value: VideoType; label: string }[] = [
   { value: "lecture", label: "Lecture / tutorial" },
@@ -21,6 +38,13 @@ const PROFILES: { value: Profile; label: string; hint: string }[] = [
   { value: "accurate", label: "Accurate", hint: "Largest models, no time limit" },
 ];
 
+const CAPABILITIES = [
+  { icon: Sparkles, label: "Teachable explanation", hint: "section by section, with timestamps" },
+  { icon: ListChecks, label: "Quiz", hint: "written from what the video teaches" },
+  { icon: AudioLines, label: "Audio overview", hint: "two voices, about five minutes" },
+  { icon: Network, label: "Mind map", hint: "the chapter structure at a glance" },
+];
+
 export default function Home() {
   const router = useRouter();
   const [mode, setMode] = useState<"url" | "upload">("url");
@@ -31,6 +55,16 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile>("balanced");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<VideoSummary[] | null>(null);
+
+  // The page is also the way back into finished work, so it should never be a
+  // dead end for someone who has processed something before.
+  useEffect(() => {
+    api
+      .videos()
+      .then((v) => setRecent([...v].sort((a, b) => b.mtime - a.mtime).slice(0, 6)))
+      .catch(() => setRecent([]));
+  }, []);
 
   const ready = mode === "url" ? !!url.trim() : !!file;
 
@@ -57,131 +91,232 @@ export default function Home() {
 
   return (
     // The shell no longer scrolls the window, so this page owns its scroll.
-    <div className="h-full overflow-y-auto px-5 pb-20">
-      <div className="mx-auto max-w-[640px] pb-9 pt-10 text-center">
-        <span className="pill pill-accent mb-4">AI video understanding</span>
-        <h1 className="text-[2.7rem] font-extrabold leading-[1.08] tracking-[-0.02em] text-ink">
-          Understand any video
-          <br />
-          <span className="text-accent">without watching it</span>
-        </h1>
-        <p className="mx-auto mt-4 max-w-[540px] text-[1.02rem] leading-relaxed text-ink-muted">
-          Paste a link. You get a teachable explanation, section by section, with the
-          algorithm and code for programming videos — and an assistant that cites the
-          moment it got each answer.
-        </p>
-      </div>
-
-      <form onSubmit={submit} className="card mx-auto max-w-[760px] p-6">
-        <div className="mb-3 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
-          {(["url", "upload"] as const).map((m) => (
-            <button
-              type="button"
-              key={m}
-              onClick={() => setMode(m)}
-              className={`rounded-xs px-3.5 py-1.5 text-[0.82rem] font-semibold capitalize transition-colors ${
-                mode === m ? "bg-surface text-ink shadow-card" : "text-ink-dim hover:text-ink"
-              }`}
-            >
-              {m === "url" ? "Paste a link" : "Upload a file"}
-            </button>
-          ))}
-        </div>
-
-        {mode === "url" ? (
-          <>
-            <label className="label" htmlFor="url">Video URL</label>
-            <input
-              id="url"
-              className="input"
-              placeholder="https://www.youtube.com/watch?v=..."
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              autoFocus
-            />
-          </>
-        ) : (
-          <>
-            <label className="label" htmlFor="file">Video file</label>
-            <input
-              id="file"
-              type="file"
-              className="input file:mr-3 file:rounded file:border-0 file:bg-surface-active file:px-3 file:py-1 file:text-ink"
-              accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            {file && (
-              <p className="mt-1 text-[0.75rem] text-ink-dim">
-                {file.name} · {(file.size / 1e6).toFixed(1)} MB
-              </p>
-            )}
-          </>
-        )}
-
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-[1fr_1.4fr]">
-          <div>
-            <label className="label" htmlFor="type">What kind of video is this?</label>
-            <select
-              id="type"
-              className="select"
-              value={videoType}
-              onChange={(e) => setVideoType(e.target.value as VideoType)}
-            >
-              {VIDEO_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label" htmlFor="topic">Topic (optional)</label>
-            <input
-              id="topic"
-              className="input"
-              placeholder="e.g. Backtracking, Transformers, Q3 roadmap"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="mt-4">
-          <span className="label">Processing profile</span>
-          <div className="grid grid-cols-3 gap-2">
-            {PROFILES.map((p) => (
-              <button
-                type="button"
-                key={p.value}
-                onClick={() => setProfile(p.value)}
-                className={`rounded-sm border px-3 py-2 text-left text-[0.8rem] transition-colors ${
-                  profile === p.value
-                    ? "border-accent bg-accent/[0.12] text-ink"
-                    : "border-border bg-surface text-ink-muted hover:border-border-strong"
-                }`}
-              >
-                <div className="font-semibold text-ink">{p.label}</div>
-                <div className="mt-0.5 text-[0.7rem] text-ink-dim">{p.hint}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {error && (
-          <p className="mt-4 rounded-sm border border-danger/40 bg-danger/[0.1] px-3 py-2 text-[0.85rem] text-danger">
-            {error}
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-[1080px] px-5 pb-20 pt-10">
+        <header className="mb-8 max-w-[620px]">
+          <span className="pill pill-accent mb-3.5">AI video understanding</span>
+          <h1 className="text-[2.5rem] font-extrabold leading-[1.08] tracking-[-0.02em] text-ink">
+            Understand any video
+            <br />
+            <span className="text-accent">without watching it</span>
+          </h1>
+          <p className="mt-3.5 text-[1rem] leading-relaxed text-ink-muted">
+            Paste a link. You get a teachable explanation, section by section, with the
+            algorithm and code for programming videos &mdash; and an assistant that cites the
+            moment it got each answer.
           </p>
-        )}
+        </header>
 
-        <button className="btn btn-primary mt-5 w-full" disabled={busy || !ready}>
-          {busy ? "Starting…" : "Summarize video"}
-        </button>
-      </form>
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+          {/* ---------------- the form ---------------- */}
+          <form onSubmit={submit} className="card p-5">
+            <div className="mb-4 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
+              {(["url", "upload"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`rounded-xs px-3.5 py-1.5 text-[0.82rem] font-semibold transition-colors ${
+                    mode === m ? "bg-surface text-ink shadow-card" : "text-ink-dim hover:text-ink"
+                  }`}
+                >
+                  {m === "url" ? "Paste a link" : "Upload a file"}
+                </button>
+              ))}
+            </div>
 
-      <div className="mx-auto mt-4 flex max-w-[760px] flex-wrap justify-center gap-2">
-        {["Teachable explanation", "Auto chapters", "Algorithm + multi-language code", "Scene extraction", "Cited Q&A"].map(
-          (f) => (
-            <span key={f} className="pill">{f}</span>
-          ),
-        )}
+            {mode === "url" ? (
+              <div className="mb-3.5">
+                <label className="label" htmlFor="url">
+                  Video URL
+                </label>
+                <input
+                  id="url"
+                  className="input"
+                  placeholder="https://www.youtube.com/watch?v=…"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="mb-3.5">
+                <label className="label" htmlFor="file">
+                  Video file
+                </label>
+                <label
+                  htmlFor="file"
+                  className="flex cursor-pointer items-center gap-2.5 rounded-sm border border-dashed border-border-strong bg-surface-raised px-3.5 py-4 text-[0.88rem] text-ink-muted transition-colors hover:border-accent hover:text-ink"
+                >
+                  <Upload className="h-4 w-4 flex-shrink-0" />
+                  <span className="min-w-0 truncate">
+                    {file ? file.name : "Choose a video file…"}
+                  </span>
+                </label>
+                <input
+                  id="file"
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+            )}
+
+            <div className="mb-3.5 grid gap-3.5 sm:grid-cols-2">
+              <div>
+                <label className="label" htmlFor="type">
+                  What kind of video is this?
+                </label>
+                <select
+                  id="type"
+                  className="select"
+                  value={videoType}
+                  onChange={(e) => setVideoType(e.target.value as VideoType)}
+                >
+                  {VIDEO_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label" htmlFor="topic">
+                  Topic (optional)
+                </label>
+                <input
+                  id="topic"
+                  className="input"
+                  placeholder="e.g. Backtracking, Q3 roadmap"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="mb-1">
+              <span className="label">Processing profile</span>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {PROFILES.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setProfile(p.value)}
+                    className={`rounded-lg border px-3 py-2.5 text-left transition-all ${
+                      profile === p.value
+                        ? "border-accent bg-accent/[0.07]"
+                        : "border-border bg-surface-raised hover:border-border-strong"
+                    }`}
+                  >
+                    <span className="block text-[0.85rem] font-semibold text-ink">{p.label}</span>
+                    <span className="mt-0.5 block text-[0.7rem] leading-snug text-ink-dim">
+                      {p.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {error && <p className="mt-3 text-[0.85rem] text-danger">{error}</p>}
+
+            <button className="btn btn-primary mt-4 w-full gap-2" disabled={busy || !ready}>
+              {busy ? "Starting…" : "Summarize video"}
+              {!busy && <ArrowRight className="h-4 w-4" />}
+            </button>
+          </form>
+
+          {/* ---------------- what you get, and what you already have ------- */}
+          <div className="flex flex-col gap-5">
+            <section className="card p-5">
+              <h2 className="m-0 mb-3 text-[0.72rem] font-bold uppercase tracking-wide text-ink-dim">
+                What comes out
+              </h2>
+              <div className="flex flex-col gap-2.5">
+                {CAPABILITIES.map((c) => (
+                  <div key={c.label} className="flex items-start gap-2.5">
+                    <span className="tile-icon bg-accent/[0.12] text-accent">
+                      <c.icon className="h-[15px] w-[15px]" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[0.85rem] font-semibold text-ink">
+                        {c.label}
+                      </span>
+                      <span className="block text-[0.74rem] text-ink-dim">{c.hint}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="card flex min-h-0 flex-col p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="m-0 text-[0.72rem] font-bold uppercase tracking-wide text-ink-dim">
+                  Recently processed
+                </h2>
+                <Link
+                  href="/library"
+                  className="text-[0.76rem] font-medium text-accent no-underline hover:underline"
+                >
+                  Library
+                </Link>
+              </div>
+
+              {recent === null ? (
+                <div className="flex flex-col gap-2">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="skeleton h-5 w-full" />
+                  ))}
+                </div>
+              ) : recent.length === 0 ? (
+                <p className="text-[0.82rem] text-ink-dim">
+                  Nothing yet &mdash; the first video you process appears here.
+                </p>
+              ) : (
+                <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                  {recent.map((v) => (
+                    <li key={v.video_id}>
+                      <Link
+                        href={`/v/${v.video_id}`}
+                        className="flex items-center gap-2 rounded-md px-1.5 py-1.5 no-underline transition-colors hover:bg-surface-hover"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[0.82rem] text-ink">
+                          {v.title}
+                        </span>
+                        {v.has_understanding && (
+                          <Sparkles className="h-3 w-3 flex-shrink-0 text-accent" />
+                        )}
+                        {v.duration_sec ? (
+                          <span className="flex flex-shrink-0 items-center gap-1 font-mono text-[0.68rem] tabular-nums text-ink-dim">
+                            <Clock className="h-3 w-3" />
+                            {humanDuration(v.duration_sec)}
+                          </span>
+                        ) : null}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <Link
+              href="/notebooks"
+              className="card flex items-center gap-3 p-4 no-underline transition-all hover:border-border-strong hover:shadow-card-hover"
+            >
+              <span className="tile-icon bg-violet/[0.12] text-violet">
+                <Layers className="h-[15px] w-[15px]" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[0.85rem] font-semibold text-ink">
+                  Ask across several videos
+                </span>
+                <span className="block text-[0.74rem] leading-snug text-ink-dim">
+                  Group a playlist or a module into a notebook and question all of it at once.
+                </span>
+              </span>
+              <ArrowRight className="h-4 w-4 flex-shrink-0 text-ink-dim" />
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );
