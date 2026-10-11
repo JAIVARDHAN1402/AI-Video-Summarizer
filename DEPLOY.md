@@ -23,13 +23,37 @@ instance is OOM-killed during warm-up, before serving a single request.
 
 | Host | Free? | Verdict |
 | --- | --- | --- |
-| **Hugging Face Spaces** (Docker) | Yes, no card | **Recommended.** Enough memory, ffmpeg installable, no payment details. Storage is ephemeral and the Space sleeps when idle. |
+| **Cloudflare quick tunnel** | Yes, no card, no account | **What works today.** Not hosting: it publishes the app already running on your machine. One command, a public HTTPS URL in seconds. The machine has to stay on and the URL changes each restart. |
+| **Hugging Face Spaces** (Docker) | **No — PRO only** | Docker and Gradio Spaces now require a paid plan; only Static Spaces (HTML/JS) are free, and a Python backend cannot run on one. `Dockerfile.hf` is kept for anyone who has PRO. |
 | **Render** | No | The free tier is 512 MB and has no persistent disk. `render.yaml` here targets the 2 GB `standard` plan, which is paid. |
 | **Fly.io / Railway** | Card required | Workable, but both want payment details up front. |
 | **Oracle Cloud Always Free** | Card for identity only | A real VM with generous memory, free indefinitely. Most setup work of the options here. |
 | **Cloudflare Tunnel from your own machine** | Yes, no card | Not hosting: it publishes the backend already running on your laptop. Good for a demo; the laptop has to stay on. |
 
-## 1. Backend on Hugging Face Spaces
+## 1. Public URL with no host at all (free, works today)
+
+One tunnel is enough for the whole app. Next.js proxies `/api/*` to the
+backend server-side, so exposing port 3000 exposes both halves — there is no
+need to tunnel 8000 as well, and no `API_ORIGIN` to keep in sync.
+
+```bash
+# both servers running locally first
+python -m server.main          # :8000
+cd web && npm run dev          # :3000
+
+cloudflared tunnel --url http://localhost:3000
+```
+
+It prints a `https://<words>.trycloudflare.com` URL that anyone can open.
+Verified end to end: the home page, `/api/health` and `/api/videos` all
+answer through it.
+
+What it costs: your machine has to stay on and connected, and the URL is
+random and changes every time you restart the tunnel. For a review demo or
+sending a link to someone, that is usually fine. For a URL that outlives your
+laptop, use a real host below.
+
+## 2. Backend on Hugging Face Spaces (needs PRO)
 
 1. huggingface.co → **New Space** → SDK **Docker** → **Blank**.
 2. Push this repository to the Space, with `SPACE_README.md` renamed to
@@ -58,14 +82,14 @@ and takes a minute to wake.
 > no Docker daemon was available — so treat the first Space build as the real
 > test.
 
-## 2. Backend on Render (paid)
+## 3. Backend on Render (paid)
 
 Config is in `render.yaml`: render.com → New → Blueprint → point it at this
 repo, set `GEMINI_API_KEY` in the dashboard, deploy. It targets the 2 GB
 `standard` plan and a 20 GB disk mounted at `/data`, which is what gives it
 persistence the Spaces free tier does not have.
 
-## 3. Frontend on Vercel
+## 4. Frontend on Vercel
 
 ```bash
 cd web
@@ -85,7 +109,7 @@ ever talks to one origin and you need no CORS for normal use.
 **Deploy the backend first.** The frontend on its own renders the form and
 then fails on every request, because there is nothing behind `/api/*`.
 
-## 4. Point the backend back at the frontend
+## 5. Point the backend back at the frontend
 
 Set on the backend, then redeploy:
 
