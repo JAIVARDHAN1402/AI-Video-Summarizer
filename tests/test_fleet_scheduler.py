@@ -106,3 +106,53 @@ def test_routes_to_the_cheapest_class_that_still_meets_the_sla():
     assert preds["cpu-16core"].predicted_sec < preds["cpu-2core"].predicted_sec
     # ...and the cheaper of the two is the small one, despite running longer.
     assert preds["cpu-2core"].cost < preds["cpu-16core"].cost
+
+
+def test_the_cost_fit_separates_fixed_setup_from_per_minute_work():
+    """A ratio learned from short videos must not be extrapolated to long ones.
+
+    Every observation this fleet had was of a two- to four-minute video. A
+    run pays ~160s before it processes anything — models, processes, one
+    round-trip to the understanding model — so over three minutes that looks
+    like 50 s/video-min. Extrapolated, an eleven-hour video came out at four
+    hours against a real cost of ninety minutes.
+    """
+    from server.db import SchedulerCost, session
+
+    wc = "cpu-fit-test"
+    # total = 150s fixed + 6 s/video-min, sampled across a realistic spread.
+    samples = [(2.0, 162.0), (5.0, 180.0), (40.0, 390.0), (120.0, 870.0)]
+    with session() as db:
+        db.query(SchedulerCost).filter_by(worker_class=wc).delete()
+        for minutes, total in samples:
+            scheduler._accumulate_fit(db, wc, minutes, total)
+        db.commit()
+
+        fit = scheduler._fit_for(db, wc)
+
+    assert fit is not None and fit.credible
+    assert 140 < fit.fixed_sec < 160, f"fixed cost recovered as {fit.fixed_sec}"
+    assert 5.5 < fit.per_min < 6.5, f"rate recovered as {fit.per_min}"
+
+    # The point of the exercise: a length far outside the samples.
+    eleven_hours = fit.predict(660)
+    assert 4000 < eleven_hours < 4500, f"{eleven_hours/3600:.2f} h for 11 hours of video"
+
+    # What a single ratio fitted to the same data would have said, for contrast.
+    ratio = sum(t for _, t in samples) / sum(m for m, _ in samples)
+    assert ratio * 660 > eleven_hours * 1.5, "the ratio should be the pessimistic one"
+
+
+def test_a_fit_from_one_video_length_is_not_trusted():
+    """Intercept and slope are not separable without a spread of lengths."""
+    from server.db import SchedulerCost, session
+
+    wc = "cpu-flat-test"
+    with session() as db:
+        db.query(SchedulerCost).filter_by(worker_class=wc).delete()
+        for total in (100.0, 104.0, 98.0, 102.0, 101.0):
+            scheduler._accumulate_fit(db, wc, 3.0, total)
+        db.commit()
+        fit = scheduler._fit_for(db, wc)
+
+    assert fit is None or not fit.credible, "a flat x-range cannot support a fit"

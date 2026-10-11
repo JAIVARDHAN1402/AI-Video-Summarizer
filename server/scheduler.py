@@ -210,6 +210,113 @@ def _class_cost(worker_class: str, key: str = _ROUTING_KEY) -> Optional[tuple[fl
         return (row.seconds, row.samples) if row else None
 
 
+# --- affine cost model -------------------------------------------------------
+#
+# Cost per video-minute is not a constant. A run pays a fixed price before it
+# processes anything — loading models, starting worker processes, one
+# round-trip to the understanding model — and then a price proportional to
+# length. Dividing total by minutes folds those together, and the result
+# depends on how long the videos happened to be.
+#
+# That is not academic. Every observation this fleet had was of a two- to
+# four-minute video, where ~160s of fixed cost spread over ~3 minutes looks
+# like 50 s/video-min. Extrapolated, an eleven-hour video was predicted at
+# four hours against a real cost nearer ninety minutes.
+#
+# So the model is fitted as total = fixed + rate x minutes, by ordinary least
+# squares over running sums. Five numbers per class are enough and each
+# completed job updates them in constant time.
+_FIT_KEYS = ("fit:n", "fit:sx", "fit:sy", "fit:sxx", "fit:sxy")
+
+# Below this the fit is guesswork: a straight line through three points that
+# are all the same length has a slope decided by noise.
+_FIT_MIN_SAMPLES = 4
+# The lengths seen must actually differ, or the intercept and the slope are
+# not separable. Longest at least twice the shortest.
+_FIT_MIN_SPREAD = 2.0
+
+
+@dataclass
+class CostFit:
+    fixed_sec: float
+    per_min: float
+    samples: int
+    credible: bool
+
+    def predict(self, duration_min: float) -> float:
+        return max(self.fixed_sec + self.per_min * duration_min, 0.1)
+
+
+def _fit_for(db, worker_class: str) -> Optional[CostFit]:
+    """Least-squares fit of total time against video length for one class."""
+    stats = {
+        r.key: (r.seconds, r.samples)
+        for r in db.query(SchedulerCost)
+        .filter(SchedulerCost.worker_class == worker_class)
+        .filter(SchedulerCost.key.in_(_FIT_KEYS))
+        .all()
+    }
+    if len(stats) < len(_FIT_KEYS):
+        return None
+
+    n = stats["fit:n"][0]
+    sx, sy = stats["fit:sx"][0], stats["fit:sy"][0]
+    sxx, sxy = stats["fit:sxx"][0], stats["fit:sxy"][0]
+    if n < 2:
+        return None
+
+    denom = n * sxx - sx * sx
+    if denom <= 1e-9:
+        return None
+    slope = (n * sxy - sx * sy) / denom
+    intercept = (sy - slope * sx) / n
+
+    # x-spread, as max/min cannot be recovered from the sums: use the
+    # coefficient of variation as a proxy for "these were not all the same".
+    mean_x = sx / n
+    var_x = max(sxx / n - mean_x * mean_x, 0.0)
+    spread_ok = mean_x > 0 and (var_x ** 0.5) / mean_x > (_FIT_MIN_SPREAD - 1) / 3.0
+
+    credible = (
+        n >= _FIT_MIN_SAMPLES
+        and spread_ok
+        and slope > 0
+        and intercept >= -1e-6
+    )
+    return CostFit(max(intercept, 0.0), slope, int(n), credible)
+
+
+def _accumulate_fit(db, worker_class: str, duration_min: float, total_sec: float) -> None:
+    """Add one observation to a class's running sums.
+
+    Unlike the EMA ratio these are sums, not blends — an exponential decay on
+    a sufficient statistic is not a sufficient statistic.
+    """
+    additions = {
+        "fit:n": 1.0,
+        "fit:sx": duration_min,
+        "fit:sy": total_sec,
+        "fit:sxx": duration_min * duration_min,
+        "fit:sxy": duration_min * total_sec,
+    }
+    for key, delta in additions.items():
+        row = (
+            db.query(SchedulerCost)
+            .filter_by(worker_class=worker_class, key=key)
+            .one_or_none()
+        )
+        if row is None:
+            db.add(SchedulerCost(worker_class=worker_class, key=key, seconds=delta, samples=1))
+            # The session is autoflush=False, so without this the row stays
+            # invisible to the next lookup and a second insert collides on
+            # the primary key — which is what backfilling several
+            # observations in one transaction does.
+            db.flush()
+        else:
+            row.seconds = row.seconds + delta
+            row.samples = (row.samples or 0) + 1
+
+
 def _blend(previous: float, observed: float) -> float:
     alpha = _ALPHA_SLOWER if observed > previous else _ALPHA_FASTER
     return (1 - alpha) * previous + alpha * observed
@@ -233,16 +340,27 @@ def route(
     cpu_ref = _cpu_reference_per_min()
 
     predictions: list[ClassPrediction] = []
+    with session() as db:
+        fits = {wc.name: _fit_for(db, wc.name) for wc in classes.values()}
+
     for wc in classes.values():
         measured = _class_cost(wc.name)
-        if measured is not None:
+        fit = fits.get(wc.name)
+        if fit is not None and fit.credible:
+            # Two parameters beat one wherever the fixed cost matters, which
+            # is every video far from the lengths already measured.
+            predicted = fit.predict(duration_min)
+            samples = fit.samples
+            from_measurement = True
+        elif measured is not None:
             per_min, samples = measured
+            predicted = per_min * duration_min
             from_measurement = True
         else:
             per_min = wc.default_seed(cpu_ref)
             samples = 0
             from_measurement = False
-        predicted = per_min * duration_min
+            predicted = per_min * duration_min
         rate = wc.rate_per_hour()
         predictions.append(ClassPrediction(
             worker_class=wc.name,
@@ -358,8 +476,10 @@ def record_outcome(job: Job) -> None:
         return
 
     with session() as db:
-        # coarse routing metric
+        # coarse routing metric, kept as the fallback for a class whose fit
+        # is not yet credible
         _upsert_cost(db, worker_class, _ROUTING_KEY, observed_per_min)
+        _accumulate_fit(db, worker_class, duration_min, total)
         # fine-grained per-stage (per video-minute) for the plan override
         for stage in ("analyze", "summarize", "index"):
             if stage in timings and timings[stage] > 0:
@@ -549,3 +669,33 @@ def classes_view() -> list[dict[str, Any]]:
             "source": "measured" if measured else "seed",
         })
     return sorted(out, key=lambda c: c["total_per_min_sec"])
+
+
+def backfill_fit_from_observations() -> int:
+    """Build each class's affine fit from the SLA observations already on record.
+
+    The sums are derivable from history, so a fleet that has been running
+    since before the fit existed does not have to re-measure from scratch —
+    which on a fleet whose jobs take minutes would mean days of bad estimates.
+    Idempotent: it rebuilds the sums rather than adding to them.
+    """
+    with session() as db:
+        existing = (
+            db.query(SchedulerCost).filter(SchedulerCost.key.in_(_FIT_KEYS)).all()
+        )
+        for row in existing:
+            db.delete(row)
+        db.flush()
+
+        seeded = 0
+        for obs in db.query(SlaObservation).all():
+            if not obs.duration_sec or not obs.actual_sec or obs.duration_sec <= 0:
+                continue
+            minutes = obs.duration_sec / 60.0
+            if obs.actual_sec / minutes < _MIN_CREDIBLE_PER_MIN:
+                continue  # cache-served, same guard as the live path
+            _accumulate_fit(db, obs.worker_class, minutes, obs.actual_sec)
+            seeded += 1
+        db.commit()
+    logger.info("seeded the cost fit from %d observations", seeded)
+    return seeded
