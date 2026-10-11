@@ -10,7 +10,13 @@ export type Turn = {
   q: string;
   a: string;
   confidence: string;
-  sources: { start: number; end: number; text: string }[];
+  sources: {
+    start: number;
+    end: number;
+    text: string;
+    video_id?: string;
+    video_title?: string;
+  }[];
   beyondVideo?: boolean;
   offTopic?: boolean;
   error?: boolean;
@@ -25,12 +31,20 @@ const STARTERS = [
 
 export function Chat({
   videoId,
+  notebookId,
   sourceRef,
   onSeek,
+  starters = STARTERS,
+  intro,
 }: {
+  /** The video a single-source chat is about; also where notes are saved. */
   videoId: string;
+  /** When set, questions go to the whole notebook instead of one video. */
+  notebookId?: string;
   sourceRef: string;
   onSeek: (s: number) => void;
+  starters?: string[];
+  intro?: { title: string; body: string };
 }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,7 +82,9 @@ ${t.a}`,
       // The thread so far goes with the question, so "explain that further"
       // resolves against it rather than being read as a standalone query.
       const prior = history.filter((t) => !t.error).map(({ q, a }) => ({ q, a }));
-      const r = await api.ask(videoId, question, prior);
+      const r = notebookId
+        ? await api.askNotebook(notebookId, question, prior)
+        : await api.ask(videoId, question, prior);
       setHistory((h) => [
         ...h,
         {
@@ -101,15 +117,14 @@ ${t.a}`,
                 <Sparkles className="h-5 w-5 text-accent" />
               </span>
               <p className="text-[1.05rem] font-bold tracking-tight text-ink">
-                Ask anything about this video
+                {intro?.title ?? "Ask anything about this video"}
               </p>
               <p className="mx-auto mt-1.5 max-w-[460px] text-[0.87rem] leading-relaxed text-ink-muted">
-                Follow-ups keep their context, and every answer cites the moment it came from.
-                If the video doesn&apos;t cover it, you still get an answer &mdash; marked as
-                going beyond the video.
+                {intro?.body ??
+                  "Follow-ups keep their context, and every answer cites the moment it came from. If the video doesn't cover it, you still get an answer — marked as going beyond the video."}
               </p>
               <div className="mt-5 flex flex-wrap justify-center gap-2">
-                {STARTERS.map((s) => (
+                {starters.map((s) => (
                   <button
                     key={s}
                     onClick={() => send(s)}
@@ -182,7 +197,19 @@ ${t.a}`,
                       {h.sources.map((s: any, k: number) => (
                         <div key={k} className="flex gap-2 text-[0.82rem] text-ink-muted">
                           <Stamp sec={s.start} sourceRef={sourceRef} onSeek={onSeek} />
-                          <span className="line-clamp-3">{s.text}</span>
+                          <span className="min-w-0 flex-1">
+                            {s.video_title && (
+                              <a
+                                href={`/v/${s.video_id}?t=${Math.floor(s.start)}`}
+                                className="mr-1.5 font-medium text-accent no-underline hover:underline"
+                              >
+                                {s.video_title}
+                              </a>
+                            )}
+                            <span className="line-clamp-3">
+                              {s.text || <em className="text-ink-dim">from the explanation</em>}
+                            </span>
+                          </span>
                         </div>
                       ))}
                     </div>

@@ -30,6 +30,23 @@ export interface JobView {
   finished_at: string | null;
 }
 
+export interface NotebookVideo {
+  video_id: string;
+  title: string;
+  duration_sec: number | null;
+  source_ref: string | null;
+  /** True when the cache no longer holds this video. */
+  missing: boolean;
+}
+export interface Notebook {
+  id: string;
+  title: string;
+  video_ids: string[];
+  videos: NotebookVideo[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 /** A reader's own note. The only thing in the cache the pipeline never writes. */
 export interface Note {
   id: string;
@@ -193,6 +210,37 @@ export const api = {
 
   video: (videoId: string) =>
     fetch(`/api/videos/${videoId}`).then((r) => j<VideoResult>(r)),
+
+  notebooks: () => fetch("/api/notebooks").then((r) => j<Notebook[]>(r)),
+
+  notebook: (id: string) => fetch(`/api/notebooks/${id}`).then((r) => j<Notebook>(r)),
+
+  createNotebook: (title: string, videoIds: string[] = []) =>
+    fetch("/api/notebooks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, video_ids: videoIds }),
+    }).then((r) => j<Notebook>(r)),
+
+  /** Omit a field to leave it alone — a rename need not resend membership. */
+  updateNotebook: (id: string, patch: { title?: string; video_ids?: string[] }) =>
+    fetch(`/api/notebooks/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => j<Notebook>(r)),
+
+  deleteNotebook: async (id: string) => {
+    const r = await fetch(`/api/notebooks/${id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+  },
+
+  askNotebook: (id: string, question: string, history: AskTurn[] = []) =>
+    fetch(`/api/notebooks/${id}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, history }),
+    }).then((r) => j<AskAnswer>(r)),
 
   notes: (videoId: string) =>
     fetch(`/api/videos/${videoId}/notes`).then((r) => j<Note[]>(r)),

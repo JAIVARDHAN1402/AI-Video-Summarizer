@@ -120,3 +120,11 @@ class NoteRequest(BaseModel):
     start_sec: Optional[float] = None
     # "manual" when typed, "chat" when saved from an answer.
     source: str = "manual"
+
+
+class NotebookRequest(BaseModel):
+    """Create or update a notebook. Both fields are optional on update, so a
+    rename does not have to resend the membership and vice versa."""
+
+    title: Optional[str] = Field(None, max_length=200)
+    video_ids: Optional[list[str]] = None

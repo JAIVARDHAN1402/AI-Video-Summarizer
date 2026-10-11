@@ -131,6 +131,40 @@ class Job(Base):
         }
 
 
+class Notebook(Base):
+    """A named set of processed videos, asked questions as one body of work.
+
+    Membership is a list of video ids rather than a join table: a notebook is
+    small, always read whole, and the videos it names live in the cache rather
+    than in this database, so there is no foreign key to enforce. A member
+    whose cache has since been cleared is skipped at read time instead of
+    breaking the notebook.
+    """
+
+    __tablename__ = "notebooks"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=lambda: uuid.uuid4().hex[:12]
+    )
+    title: Mapped[str] = mapped_column(String(200), default="Untitled notebook")
+    video_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "video_ids": list(self.video_ids or []),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class SchedulerCost(Base):
     """One learned cost figure for a (worker class, metric) pair.
 

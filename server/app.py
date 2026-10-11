@@ -6,6 +6,8 @@ Endpoints
     GET    /api/jobs/{id}            one job's status + progress
     GET    /api/jobs/{id}/events     Server-Sent Events stream of progress
     GET    /api/videos               every processed video in the cache
+    GET    /api/notebooks            sets of videos asked as one
+    POST   /api/notebooks/{id}/ask   one question across a notebook
     GET    /api/videos/{video_id}    the finished result (understanding, scenes, ...)
     GET    /api/videos/{video_id}/keyframes/{name}   a keyframe image
     POST   /api/videos/{video_id}/ask                grounded Q&A
@@ -354,6 +356,126 @@ def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
         raise HTTPException(503, "no language model is configured on the server") from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"quiz generation failed: {exc}") from exc
+
+
+# --- notebooks: several videos asked as one body of material -----------------
+
+
+def _notebook_view(nb) -> dict:
+    """A notebook plus enough about each member for the sidebar to render.
+
+    Members whose cache has been cleared are reported rather than hidden, so
+    a notebook never silently shrinks.
+    """
+    from core import pipeline
+
+    videos = []
+    for vid in nb.video_ids or []:
+        meta = pipeline.get_meta(vid)
+        videos.append(
+            {
+                "video_id": vid,
+                "title": (meta or {}).get("title") or vid,
+                "duration_sec": (meta or {}).get("duration_sec"),
+                "source_ref": (meta or {}).get("source_ref"),
+                "missing": meta is None,
+            }
+        )
+    return {**nb.to_dict(), "videos": videos}
+
+
+@app.get("/api/notebooks")
+def list_notebooks() -> list[dict]:
+    from server.db import Notebook, session
+
+    with session() as db:
+        rows = db.query(Notebook).order_by(Notebook.updated_at.desc()).all()
+        return [_notebook_view(nb) for nb in rows]
+
+
+@app.post("/api/notebooks", status_code=201)
+def create_notebook(req: schemas.NotebookRequest) -> dict:
+    from server.db import Notebook, session
+
+    with session() as db:
+        nb = Notebook(
+            title=(req.title or "Untitled notebook").strip()[:200],
+            video_ids=list(dict.fromkeys(req.video_ids or [])),
+        )
+        db.add(nb)
+        db.commit()
+        db.refresh(nb)
+        return _notebook_view(nb)
+
+
+@app.get("/api/notebooks/{notebook_id}")
+def get_notebook(notebook_id: str) -> dict:
+    from server.db import Notebook, session
+
+    with session() as db:
+        nb = db.get(Notebook, notebook_id)
+        if nb is None:
+            raise HTTPException(404, "notebook not found")
+        return _notebook_view(nb)
+
+
+@app.put("/api/notebooks/{notebook_id}")
+def update_notebook(notebook_id: str, req: schemas.NotebookRequest) -> dict:
+    import datetime as _dt
+
+    from server.db import Notebook, session
+
+    with session() as db:
+        nb = db.get(Notebook, notebook_id)
+        if nb is None:
+            raise HTTPException(404, "notebook not found")
+        if req.title is not None:
+            nb.title = req.title.strip()[:200] or "Untitled notebook"
+        if req.video_ids is not None:
+            # dict.fromkeys keeps the caller's ordering while dropping repeats.
+            nb.video_ids = list(dict.fromkeys(req.video_ids))
+        nb.updated_at = _dt.datetime.now(_dt.timezone.utc)
+        db.commit()
+        db.refresh(nb)
+        return _notebook_view(nb)
+
+
+@app.delete("/api/notebooks/{notebook_id}", status_code=204, response_class=Response)
+def delete_notebook(notebook_id: str) -> Response:
+    """Removes the notebook only. The videos it named stay in the cache."""
+    from server.db import Notebook, session
+
+    with session() as db:
+        nb = db.get(Notebook, notebook_id)
+        if nb is None:
+            raise HTTPException(404, "notebook not found")
+        db.delete(nb)
+        db.commit()
+    return Response(status_code=204)
+
+
+@app.post("/api/notebooks/{notebook_id}/ask", response_model=schemas.AskResponse)
+def ask_notebook(notebook_id: str, req: schemas.AskRequest) -> schemas.AskResponse:
+    """One question against every video in the notebook."""
+    from core import collection
+    from server.db import Notebook, session
+
+    with session() as db:
+        nb = db.get(Notebook, notebook_id)
+        if nb is None:
+            raise HTTPException(404, "notebook not found")
+        video_ids = list(nb.video_ids or [])
+
+    result = collection.answer_across(
+        video_ids, req.question.strip(), [{"q": t.q, "a": t.a} for t in req.history]
+    )
+    return schemas.AskResponse(
+        answer=result["answer"],
+        confidence=result.get("confidence", "low"),
+        sources=result.get("sources", []),
+        beyond_video=bool(result.get("beyond_video")),
+        off_topic=bool(result.get("off_topic")),
+    )
 
 
 @app.get("/api/videos/{video_id}/audio-overview")

@@ -53,6 +53,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             >
               Library
             </Link>
+            <Link
+              href="/notebooks"
+              className="rounded-md px-3 py-1.5 no-underline transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              Notebooks
+            </Link>
             <span className="mx-1 h-5 w-px bg-border" />
             <ThemeToggle />
           </nav>
