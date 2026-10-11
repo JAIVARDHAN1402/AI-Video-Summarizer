@@ -80,7 +80,9 @@ export default function VideoPage({ params }: { params: Promise<{ videoId: strin
       "data-table": scenes.length,
       "slide-deck": chapters.length,
       infographic: u ? 1 : 0,
-      report: Object.keys(timings).length,
+      report:
+        Object.keys(timings).length ||
+        (data?.meta?.plan && Object.keys(data.meta.plan).length ? 1 : 0),
     }),
     [u, chapters, scenes, timings],
   );
@@ -697,6 +699,12 @@ function ReportView({
       )}
       <div>
         <SectionHead title="Time per stage" />
+        {Object.keys(timings).length === 0 && (
+          <p className="text-[0.85rem] leading-relaxed text-ink-dim">
+            No timings were recorded for this run. The configuration below is still what the
+            planner chose for it.
+          </p>
+        )}
         {Object.entries(timings)
           .filter(([k]) => k !== "total")
           .map(([k, v]) => (

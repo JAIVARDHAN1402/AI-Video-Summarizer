@@ -186,6 +186,21 @@ def write_state(video_id: str, stage: str, progress: float, message: str,
         "error": error,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # The run's record survives later writes. state.json holds two different
+    # kinds of thing: where processing is right now, which every tick
+    # replaces, and what the finished run cost — its timings and the plan it
+    # chose — which is written once at the end and must outlive anything that
+    # reports progress afterwards. Audio-overview generation does exactly
+    # that, and without this it silently erased the timings of every video it
+    # was run on, leaving the run report with nothing to show.
+    for key in ("timings", "plan"):
+        if extra and key in extra:
+            continue
+        previous = (read_json(video_id, "state") or {}).get(key)
+        if previous:
+            payload[key] = previous
+
     if extra:
         payload.update(extra)
     write_json(video_id, "state", payload, required=False)

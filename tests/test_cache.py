@@ -122,3 +122,37 @@ def test_list_cached_videos_orders_most_recent_first(monkeypatch):
 
 def test_list_cached_videos_empty_when_no_cache_root():
     assert cache.list_cached_videos() == []
+
+
+def test_a_later_state_write_keeps_the_finished_run_s_record():
+    """Progress reported after a run must not erase what the run cost.
+
+    state.json holds two different kinds of thing: where processing is right
+    now, which every tick replaces, and the timings and plan of the finished
+    run, written once at the end. Generating an audio overview reports
+    progress long after the pipeline is done, and that used to overwrite the
+    file wholesale — leaving the run report with nothing to show for videos
+    that had been processed perfectly well.
+    """
+    vid = "state-merge"
+    cache.write_state(
+        vid, "done", 1.0, "finished",
+        extra={"timings": {"ingest": 2.0, "total": 58.6}, "plan": {"asr_model": "small"}},
+    )
+
+    # A terminal write always lands, so this is not swallowed by the tick
+    # rate-limiter the way an intermediate progress tick would be.
+    cache.write_state(vid, "audio", 1.0, "Audio overview ready")
+
+    state = cache.get_state(vid)
+    assert state["stage"] == "audio", "the new stage should still be recorded"
+    assert state["timings"] == {"ingest": 2.0, "total": 58.6}
+    assert state["plan"] == {"asr_model": "small"}
+
+
+def test_a_rerun_can_still_replace_the_timings():
+    """Carrying the old record forward must not pin it there for ever."""
+    vid = "state-replace"
+    cache.write_state(vid, "done", 1.0, "first", extra={"timings": {"total": 10.0}})
+    cache.write_state(vid, "done", 1.0, "second", extra={"timings": {"total": 20.0}})
+    assert cache.get_state(vid)["timings"] == {"total": 20.0}
