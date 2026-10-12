@@ -313,6 +313,26 @@ QA_HISTORY_TURNS = int(os.getenv("VS_QA_HISTORY_TURNS", "6"))
 # Sections of the understanding doc to offer as context, most relevant first.
 QA_UNDERSTANDING_SECTIONS = int(os.getenv("VS_QA_UNDERSTANDING_SECTIONS", "6"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- Any OpenAI-compatible provider -------------------------------------------
+# Groq, OpenRouter, Cerebras, Together, Mistral and a local Ollama all speak
+# the same chat-completions shape, and several have a free tier with no card.
+# Set these three and they take precedence over GEMINI_API_KEY. Examples:
+#
+#   Groq        VS_LLM_BASE_URL=https://api.groq.com/openai/v1
+#               VS_LLM_MODEL=llama-3.3-70b-versatile
+#   OpenRouter  VS_LLM_BASE_URL=https://openrouter.ai/api/v1
+#               VS_LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
+#   Ollama      VS_LLM_BASE_URL=http://localhost:11434/v1
+#               VS_LLM_MODEL=llama3.1   (VS_LLM_API_KEY can be anything)
+#
+# These models are smaller than Gemini 2.5 Flash and are not multimodal, so
+# keyframes are not sent and the explanation leans on OCR for what is on
+# screen. That is a real step down — and a long way up from the offline
+# BART fallback, which is the only other option when a quota runs out.
+LLM_BASE_URL = os.getenv("VS_LLM_BASE_URL")
+LLM_API_KEY = os.getenv("VS_LLM_API_KEY")
+LLM_MODEL = os.getenv("VS_LLM_MODEL")
 USE_GEMINI = GEMINI_API_KEY is not None
 GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backend (core/qa.py)
 

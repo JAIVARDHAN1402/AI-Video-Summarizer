@@ -567,7 +567,12 @@ def plan_for(
     # windowed) instead of a BART pass per chunk. Budgeting the local ladder for
     # a stage that will not run inflated the estimate by minutes and made the
     # planner downshift ASR to buy room it did not need.
-    if config.GEMINI_API_KEY:
+    # Any configured provider replaces the local ladder, not only Gemini —
+    # checking the Gemini key alone made the planner budget a BART pass that
+    # was never going to run whenever an OpenAI-compatible endpoint was set.
+    from core import llm as _llm
+
+    if _llm.get_client().available:
         learned = profile.observed_rtf.get("understand:per_min")
         if cost_override and "understand:per_min" in cost_override:
             learned = cost_override["understand:per_min"]

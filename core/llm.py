@@ -310,9 +310,205 @@ class LLMClient:
 _client: Optional[LLMClient] = None
 
 
-def get_client() -> LLMClient:
-    """Process-wide singleton."""
+def get_client():
+    """Process-wide singleton for whichever provider is configured.
+
+    An explicitly configured OpenAI-compatible endpoint wins over Gemini,
+    because setting one is a deliberate act — usually because the Gemini
+    quota ran out and the alternative is the offline summariser.
+    """
     global _client
     if _client is None:
-        _client = LLMClient()
+        candidate = OpenAICompatibleClient()
+        _client = candidate if candidate.available else LLMClient()
+        logger.info("LLM provider: %s (%s)",
+                    type(_client).__name__,
+                    _client.model if _client.available else "unconfigured")
     return _client
+
+
+def reset_client() -> None:
+    """Drop the cached client so a configuration change takes effect."""
+    global _client
+    _client = None
+
+
+# =============================================================================
+# OpenAI-compatible providers
+# =============================================================================
+#
+# Groq, OpenRouter, Cerebras, Together, Mistral and a locally served Ollama
+# all speak the same chat-completions shape, so one client reaches all of
+# them. That matters because several have a usable free tier with no card,
+# and the alternative when a quota runs out is the local BART summariser —
+# which on a long video is both far worse and far slower than a smaller
+# hosted model would be.
+#
+# Two things differ from Gemini and are handled here rather than pushed up:
+#
+#   Schema. Gemini enforces a JSON Schema server-side. Most of these accept
+#   only {"type": "json_object"}, so the schema is described in the system
+#   message instead and the reply is validated on arrival. Weaker, but the
+#   callers already treat a malformed reply as a failure.
+#
+#   Images. The free text models are not multimodal. Keyframes are dropped
+#   with one warning rather than silently, because losing them changes what
+#   the explanation can say about slides and diagrams.
+
+
+class OpenAICompatibleClient:
+    """Chat-completions client for any OpenAI-shaped endpoint."""
+
+    def __init__(self) -> None:
+        self._api_key = config.LLM_API_KEY
+        self._base_url = (config.LLM_BASE_URL or "").rstrip("/")
+        self._model = config.LLM_MODEL
+        self._warned_images = False
+
+    @property
+    def available(self) -> bool:
+        return bool(self._api_key and self._base_url and self._model)
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def generate_json(
+        self,
+        system_instruction: str,
+        prompt: str,
+        *,
+        schema: Optional[dict[str, Any]] = None,
+        temperature: float = 0.4,
+        max_output_tokens: int = 8192,
+        thinking_budget: int = 0,   # accepted for signature parity; unused
+        images: Optional[list["ImageRef"]] = None,
+        retries: int = 3,
+    ) -> LLMResult:
+        if not self.available:
+            raise LLMUnavailable("no OpenAI-compatible provider configured")
+
+        import requests
+
+        if images and not self._warned_images:
+            logger.warning(
+                "%s is being used as a text-only model; %d keyframes are not "
+                "being sent, so the explanation cannot describe what is on "
+                "screen beyond the OCR text", self._model, len(images),
+            )
+            self._warned_images = True
+
+        truncated = len(prompt) > MAX_CONTEXT_CHARS
+        if truncated:
+            logger.warning("prompt is %d chars; trimming to %d before sending",
+                           len(prompt), MAX_CONTEXT_CHARS)
+            prompt = prompt[:MAX_CONTEXT_CHARS]
+
+        system = system_instruction
+        if schema:
+            system += (
+                "\n\nReply with a single JSON object and nothing else — no "
+                "prose, no code fence. It must match this JSON Schema:\n"
+                + json.dumps(schema, separators=(",", ":"))
+            )
+
+        body: dict[str, Any] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_output_tokens,
+        }
+        if schema:
+            body["response_format"] = {"type": "json_object"}
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self._base_url}/chat/completions"
+
+        started = time.perf_counter()
+        last_error = ""
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.post(url, headers=headers, json=body, timeout=600)
+            except Exception as exc:                      # network-level
+                last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("LLM attempt %d/%d failed to connect (%s)",
+                               attempt, retries, last_error[:120])
+                time.sleep(min(2 ** attempt, 30))
+                continue
+
+            if response.status_code == 200:
+                return self._parse(
+                    response.json(), len(prompt),
+                    time.perf_counter() - started, truncated,
+                )
+
+            if response.status_code in (429, 500, 502, 503, 504):
+                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+                if response.status_code == 429 and _quota_is_exhausted(response):
+                    raise LLMQuotaExceeded(
+                        "the provider's quota is exhausted for this period "
+                        f"(HTTP 429): {response.text[:200]}"
+                    )
+                delay = _retry_delay_sec(response) or min(2 ** attempt, 30)
+                logger.warning("LLM attempt %d/%d transient (%s); waiting %.0fs",
+                               attempt, retries, last_error[:120], delay)
+                time.sleep(delay)
+                continue
+
+            raise LLMError(
+                f"{self._base_url} rejected the request "
+                f"(HTTP {response.status_code}): {response.text[:400]}"
+            )
+
+        raise LLMError(f"call failed after {retries} attempts. Last error: {last_error}")
+
+    def _parse(
+        self, payload: dict[str, Any], prompt_chars: int, elapsed: float, truncated: bool
+    ) -> LLMResult:
+        choices = payload.get("choices") or []
+        if not choices:
+            raise LLMError("the provider returned no choices")
+        choice = choices[0]
+        text = ((choice.get("message") or {}).get("content") or "").strip()
+        finish = choice.get("finish_reason") or ""
+        if not text:
+            raise LLMError(f"the provider returned an empty reply (finish_reason={finish})")
+
+        # Some models wrap JSON in a fence despite being asked not to.
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3]
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            # A truncated reply is the usual cause, and says the output cap is
+            # too low for what was asked — worth saying so plainly.
+            hint = (
+                " The reply hit the output limit, so it was cut mid-JSON; "
+                "lower VS_UNDERSTANDING_MAX_TOKENS or raise the window count."
+                if finish == "length" else ""
+            )
+            raise LLMError(
+                f"the provider did not return valid JSON (finish_reason={finish}).{hint} "
+                f"First 200 chars: {text[:200]}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise LLMError("the provider returned JSON that is not an object")
+
+        return LLMResult(
+            data=data,
+            model=payload.get("model") or self._model,
+            finish_reason=finish,
+            prompt_chars=prompt_chars,
+            elapsed_sec=elapsed,
+            truncated_input=truncated,
+        )

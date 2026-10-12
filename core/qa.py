@@ -321,8 +321,14 @@ def _tidy_answer(text: str) -> str:
     return text[0].upper() + text[1:]
 
 def _generate(prompt: str) -> str:
-    """Single interchangeable entry point for both generation backends."""
-    if config.USE_GEMINI:
+    """Single interchangeable entry point for both generation backends.
+
+    This is the pre-tutor path, kept for the no-schema case. It calls Gemini
+    directly, so it only applies when Gemini is the provider — with an
+    OpenAI-compatible endpoint configured the tutor path above handles the
+    question and this is reached only as a local fallback.
+    """
+    if config.USE_GEMINI and not config.LLM_BASE_URL:
         try:
             return _generate_gemini(prompt)
         except Exception as exc:
