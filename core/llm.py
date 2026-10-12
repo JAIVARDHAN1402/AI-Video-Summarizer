@@ -405,6 +405,24 @@ class OpenAICompatibleClient:
     def model(self) -> str:
         return self._model
 
+    def _reasoning(self, thinking_budget: int) -> Optional[dict[str, Any]]:
+        """The provider switch for hidden reasoning, when it takes one.
+
+        A reasoning model spends the output budget thinking before it writes,
+        which on a schema-shaped reply shows up as JSON truncated mid-object
+        rather than as a slower answer. Only OpenRouter documents this field,
+        so it is not sent blind to an endpoint that might reject it.
+        """
+        forced = config.LLM_REASONING
+        if forced is not None:
+            if forced in ("0", "false", "False"):
+                return {"enabled": False}
+        elif "openrouter.ai" not in self._base_url:
+            return None
+        if thinking_budget > 0:
+            return {"max_tokens": thinking_budget}
+        return {"enabled": False}
+
     @staticmethod
     def _user_content(prompt: str, images: list["ImageRef"]) -> Any:
         """The user message, as plain text or as vision content parts.
@@ -434,7 +452,7 @@ class OpenAICompatibleClient:
         schema: Optional[dict[str, Any]] = None,
         temperature: float = 0.4,
         max_output_tokens: int = 8192,
-        thinking_budget: int = 0,   # accepted for signature parity; unused
+        thinking_budget: int = 0,
         images: Optional[list["ImageRef"]] = None,
         retries: int = 3,
     ) -> LLMResult:
@@ -481,6 +499,9 @@ class OpenAICompatibleClient:
             }
             if schema:
                 body["response_format"] = {"type": "json_object"}
+            reasoning = self._reasoning(thinking_budget)
+            if reasoning is not None:
+                body["reasoning"] = reasoning
             return body
 
         body = build(images)

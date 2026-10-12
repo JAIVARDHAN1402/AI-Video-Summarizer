@@ -252,3 +252,44 @@ def test_an_unrelated_400_is_still_an_error(client, monkeypatch):
 
     with pytest.raises(llm.LLMError, match="does not exist"):
         client.generate_json("sys", "prompt", images=[("scene at 00:10", JPEG)])
+
+
+# --- reasoning ------------------------------------------------------------
+# A reasoning model spends the output budget thinking before it writes. On a
+# schema-shaped reply that is not a slower answer, it is JSON cut mid-object:
+# measured at 145 reasoning tokens against 18 of actual content.
+
+@pytest.fixture
+def openrouter(monkeypatch):
+    monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(llm.config, "LLM_MODEL", "some/model:free")
+    monkeypatch.setattr(llm.config, "LLM_REASONING", None)
+    return llm.OpenAICompatibleClient()
+
+
+def test_openrouter_is_told_not_to_think_by_default(openrouter):
+    assert openrouter._reasoning(0) == {"enabled": False}
+
+
+def test_a_thinking_budget_is_passed_through(openrouter):
+    assert openrouter._reasoning(2048) == {"max_tokens": 2048}
+
+
+def test_other_providers_are_not_sent_an_openrouter_extension(monkeypatch):
+    """A strict endpoint rejects a field it does not know, so the switch is
+    not sent blind."""
+    monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(llm.config, "LLM_MODEL", "m")
+    monkeypatch.setattr(llm.config, "LLM_REASONING", None)
+    assert llm.OpenAICompatibleClient()._reasoning(0) is None
+
+
+def test_the_switch_can_be_forced_on_for_any_provider(monkeypatch):
+    monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(llm.config, "LLM_MODEL", "m")
+    monkeypatch.setattr(llm.config, "LLM_REASONING", "0")
+    assert llm.OpenAICompatibleClient()._reasoning(4096) == {"enabled": False}, \
+        "forcing it off must win over a requested budget"

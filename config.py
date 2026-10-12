@@ -344,6 +344,13 @@ LLM_MAX_OUTPUT_TOKENS = int(os.getenv("VS_LLM_MAX_OUTPUT_TOKENS", "8192"))
 # and drops them for the rest of the run, so this is only needed to skip
 # the one wasted call.
 LLM_SEND_IMAGES = os.getenv("VS_LLM_SEND_IMAGES", "1") not in ("0", "false", "False")
+# Several free models think before answering, and that hidden reasoning is
+# charged against max_tokens: a reply worth 18 tokens cost 163 and came
+# back cut off mid-JSON. OpenRouter exposes a switch for it, doing the job
+# that thinkingBudget already does on the Gemini client. Left blank the
+# switch is sent only to OpenRouter, whose extension it is; "1" or "0"
+# forces it on or off for any provider.
+LLM_REASONING = os.getenv("VS_LLM_REASONING")
 USE_GEMINI = GEMINI_API_KEY is not None
 GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backend (core/qa.py)
 
