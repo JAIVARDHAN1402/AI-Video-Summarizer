@@ -104,6 +104,23 @@ def _request_exceeds_rate_limit(response) -> bool:
         "tokens per minute" in text and "requested" in text)
 
 
+def _refused_the_images(response) -> bool:
+    """Whether a rejection is about the attached keyframes specifically.
+
+    Worth separating from a malformed request: the same prompt without the
+    images will succeed, so the run can continue with a smaller explanation
+    rather than failing.
+    """
+    if response.status_code not in (400, 404, 415, 422):
+        return False
+    try:
+        text = response.text.lower()
+    except Exception:
+        return False
+    return any(s in text for s in (
+        "image", "vision", "multimodal", "modality", "image_url"))
+
+
 class LLMQuotaExceeded(LLMError):
     """Raised when the provider's quota is spent for the period.
 
@@ -388,6 +405,27 @@ class OpenAICompatibleClient:
     def model(self) -> str:
         return self._model
 
+    @staticmethod
+    def _user_content(prompt: str, images: list["ImageRef"]) -> Any:
+        """The user message, as plain text or as vision content parts.
+
+        A model that takes images wants a list of parts; one that does not
+        wants a bare string, and sending it a single-element list is a needless
+        difference. Each keyframe is captioned first so the model can tie it to
+        a timestamp, matching how the Gemini client sends them.
+        """
+        if not images:
+            return prompt
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for caption, jpeg in images:
+            encoded = base64.b64encode(jpeg).decode("ascii")
+            parts.append({"type": "text", "text": f"\n[Image — {caption}]"})
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+            })
+        return parts
+
     def generate_json(
         self,
         system_instruction: str,
@@ -405,13 +443,16 @@ class OpenAICompatibleClient:
 
         import requests
 
-        if images and not self._warned_images:
-            logger.warning(
-                "%s is being used as a text-only model; %d keyframes are not "
-                "being sent, so the explanation cannot describe what is on "
-                "screen beyond the OCR text", self._model, len(images),
-            )
-            self._warned_images = True
+        images = list(images or [])
+        if images and not config.LLM_SEND_IMAGES:
+            if not self._warned_images:
+                logger.warning(
+                    "VS_LLM_SEND_IMAGES is off, so %d keyframes are not being "
+                    "sent; the explanation can only describe what is on screen "
+                    "through the OCR text", len(images),
+                )
+                self._warned_images = True
+            images = []
 
         truncated = len(prompt) > MAX_CONTEXT_CHARS
         if truncated:
@@ -427,17 +468,22 @@ class OpenAICompatibleClient:
                 + json.dumps(schema, separators=(",", ":"))
             )
 
-        body: dict[str, Any] = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": temperature,
-            "max_tokens": min(max_output_tokens, config.LLM_MAX_OUTPUT_TOKENS),
-        }
-        if schema:
-            body["response_format"] = {"type": "json_object"}
+        def build(with_images: list["ImageRef"]) -> dict[str, Any]:
+            body: dict[str, Any] = {
+                "model": self._model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",
+                     "content": self._user_content(prompt, with_images)},
+                ],
+                "temperature": temperature,
+                "max_tokens": min(max_output_tokens, config.LLM_MAX_OUTPUT_TOKENS),
+            }
+            if schema:
+                body["response_format"] = {"type": "json_object"}
+            return body
+
+        body = build(images)
 
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -481,6 +527,19 @@ class OpenAICompatibleClient:
                 logger.warning("LLM attempt %d/%d transient (%s); waiting %.0fs",
                                attempt, retries, last_error[:120], delay)
                 time.sleep(delay)
+                continue
+
+            # A text-only model rejects the image parts outright. Which free
+            # models take images changes, so rather than making the user find
+            # out from a stack trace, drop them and ask again as text.
+            if images and _refused_the_images(response):
+                logger.warning(
+                    "%s will not accept keyframes (HTTP %d), so the rest of "
+                    "this run sends transcript and OCR text only: %s",
+                    self._model, response.status_code, response.text[:200],
+                )
+                images, body = [], build([])
+                self._warned_images = True
                 continue
 
             raise LLMError(

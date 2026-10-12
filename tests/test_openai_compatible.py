@@ -162,3 +162,93 @@ def test_the_completion_request_is_clamped_to_the_provider_ceiling(client, monke
 
     client.generate_json("sys", "prompt", max_output_tokens=2048)
     assert sent["max_tokens"] == 2048, "a smaller ask must not be raised"
+
+
+# --- keyframes ------------------------------------------------------------
+# Several of OpenRouter's free models accept images, so the multimodal path
+# matters here too; the complication is that which ones do changes over time.
+
+JPEG = b"\xff\xd8\xff\xe0 not really a jpeg \xff\xd9"
+
+
+def test_a_text_only_prompt_stays_a_plain_string():
+    """Wrapping one text part in a list is a needless difference from what
+    every provider documents."""
+    assert llm.OpenAICompatibleClient._user_content("hello", []) == "hello"
+
+
+def test_keyframes_become_captioned_vision_parts():
+    parts = llm.OpenAICompatibleClient._user_content(
+        "explain this", [("scene at 01:23", JPEG)])
+    assert parts[0] == {"type": "text", "text": "explain this"}
+    assert "01:23" in parts[1]["text"], "the caption ties the frame to a time"
+    assert parts[2]["type"] == "image_url"
+    assert parts[2]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_images_can_be_turned_off_for_a_text_only_model(client, monkeypatch):
+    monkeypatch.setattr(llm.config, "LLM_SEND_IMAGES", False)
+    sent = {}
+
+    class Ok:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "ok"}')
+
+    import requests
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None:
+                        (sent.update(json), Ok())[1])
+
+    client.generate_json("sys", "prompt", images=[("scene at 00:10", JPEG)])
+    assert sent["messages"][1]["content"] == "prompt", "no image parts"
+
+
+def test_a_model_that_refuses_images_is_retried_without_them(client, monkeypatch):
+    """The run should lose the visual detail, not fail outright."""
+    bodies = []
+
+    class Refusal:
+        status_code = 400
+        text = "This model does not support image input"
+
+        def json(self):
+            return {"error": {"message": Refusal.text}}
+
+    class Ok:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "ok"}')
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        bodies.append(json)
+        return Refusal() if len(bodies) == 1 else Ok()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    result = client.generate_json("sys", "prompt", images=[("scene at 00:10", JPEG)])
+    assert result.data == {"overview": "ok"}
+    assert isinstance(bodies[0]["messages"][1]["content"], list), "images first"
+    assert bodies[1]["messages"][1]["content"] == "prompt", "then text only"
+
+
+def test_an_unrelated_400_is_still_an_error(client, monkeypatch):
+    """Dropping the images must not swallow a genuinely bad request."""
+    class BadRequest:
+        status_code = 400
+        text = "model `some-free-model` does not exist"
+
+        def json(self):
+            return {"error": {"message": BadRequest.text}}
+
+    import requests
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None: BadRequest())
+
+    with pytest.raises(llm.LLMError, match="does not exist"):
+        client.generate_json("sys", "prompt", images=[("scene at 00:10", JPEG)])

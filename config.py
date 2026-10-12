@@ -338,6 +338,12 @@ LLM_MODEL = os.getenv("VS_LLM_MODEL")
 # what the OpenAI-compatible client requests, so one provider's ceiling
 # does not mean retuning UNDERSTANDING_MAX_OUTPUT_TOKENS for all of them.
 LLM_MAX_OUTPUT_TOKENS = int(os.getenv("VS_LLM_MAX_OUTPUT_TOKENS", "8192"))
+# Several free models accept images, so keyframes are sent by default and
+# the explanation can describe what is on screen rather than inferring it
+# from OCR text. A text-only model rejects them; the client notices that
+# and drops them for the rest of the run, so this is only needed to skip
+# the one wasted call.
+LLM_SEND_IMAGES = os.getenv("VS_LLM_SEND_IMAGES", "1") not in ("0", "false", "False")
 USE_GEMINI = GEMINI_API_KEY is not None
 GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backend (core/qa.py)
 
