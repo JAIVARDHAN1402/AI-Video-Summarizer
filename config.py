@@ -342,6 +342,14 @@ UNDERSTAND_REFERENCE_SEC_PER_MIN = 0.9
 
 UNDERSTANDING_SINGLE_PASS_MAX_MIN = float(os.getenv("VS_UNDERSTANDING_SINGLE_PASS_MIN", "45"))
 UNDERSTANDING_WINDOW_MIN = float(os.getenv("VS_UNDERSTANDING_WINDOW_MIN", "25"))
+# Ceiling on how many windows a single video may be split into. Each window
+# is one request, so this is really a cap on what one video may cost against
+# the provider's quota. An 11-hour video at 25-minute windows is 27 requests
+# plus a reduce; on a free tier that exhausts the day's allowance on one
+# video, every later window then 429s, and the run falls back to the local
+# summariser — which is both far worse and, on a video that long, far slower.
+# Past the cap the windows simply widen.
+UNDERSTANDING_MAX_WINDOWS = int(os.getenv("VS_UNDERSTANDING_MAX_WINDOWS", "16"))
 
 # Seconds to wait between window calls. A long video is many calls in quick
 # succession, which is exactly what trips a per-minute quota — a 12-hour video
@@ -362,6 +370,13 @@ UNDERSTANDING_SCENE_IMAGE_WIDTH = 768
 # Fall back to the local BART/flan-t5 summarizer if the LLM call fails, rather
 # than failing the whole run. Set False to surface LLM errors instead.
 UNDERSTANDING_FALLBACK_TO_LOCAL = True
+# Longest video for which the local fallback is still worth running when the
+# LLM path fails. Beyond this it is a trap: on an 11-hour recording the
+# BART map-reduce ran for most of three hours and produced text nobody could
+# learn from, and the quiz, flashcards and audio overview stayed off anyway
+# because they are built from the explanation it cannot write. Past this
+# length the run stops with a reason instead.
+LOCAL_FALLBACK_MAX_VIDEO_MIN = float(os.getenv("VS_LOCAL_FALLBACK_MAX_MIN", "90"))
 
 # --- UI / misc -------------------------------------------------------------
 TEAM_NAMES = os.getenv(

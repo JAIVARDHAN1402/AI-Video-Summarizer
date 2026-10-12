@@ -413,14 +413,25 @@ def _build_prompt(
 # --- Windowed understanding (long videos) ----------------------------------------
 
 
-def _windows(duration_sec: float, window_min: float) -> list[tuple[float, float]]:
+def _windows(
+    duration_sec: float, window_min: float, max_windows: Optional[int] = None
+) -> list[tuple[float, float]]:
     """Split a duration into near-equal windows of at most ``window_min``.
 
     Equal-sized rather than fixed-length so the last window is never a stub:
     a 70-minute video at a 25-minute target becomes 3 x 23.3, not 25/25/20.
+
+    ``max_windows`` caps the call count, which matters because every window is
+    one request against the provider's quota. An 11-hour video at 25 minutes
+    is 27 calls plus a reduce, enough to exhaust a free tier on a single
+    video — and when it does, every remaining window fails and the run falls
+    back to the local summariser. Widening the windows past the cap trades
+    some explanation density for a run that actually finishes.
     """
     window_sec = max(window_min * 60.0, 60.0)
     count = max(int(math.ceil(duration_sec / window_sec)), 1)
+    if max_windows and count > max_windows:
+        count = max_windows
     step = duration_sec / count
     return [(i * step, (i + 1) * step if i < count - 1 else duration_sec)
             for i in range(count)]
@@ -452,7 +463,8 @@ def _generate_windowed(
     so the explanation stays as dense at three hours as it is at ten minutes.
     """
     duration = float(meta.get("duration_sec") or 0.0)
-    bounds = _windows(duration, config.UNDERSTANDING_WINDOW_MIN)
+    bounds = _windows(duration, config.UNDERSTANDING_WINDOW_MIN,
+                      config.UNDERSTANDING_MAX_WINDOWS)
     persona = _PERSONA_BY_TYPE[vtype]
     logger.info("%s: %.0f min -> %d windows of ~%.0f min",
                 video_id, duration / 60, len(bounds), (duration / len(bounds)) / 60)
@@ -461,6 +473,7 @@ def _generate_windowed(
     chapters: list[dict[str, Any]] = []
     scene_notes: list[dict[str, Any]] = []
     failed: list[int] = []
+    quota_hit = False
     model = client.model
 
     for i, (start, end) in enumerate(bounds, 1):
@@ -493,6 +506,19 @@ def _generate_windowed(
                 thinking_budget=thinking,
                 images=images,
             )
+        except llm.LLMQuotaExceeded:
+            # The quota does not come back during this run, so the remaining
+            # windows would each fail the same way. Stop here and keep what
+            # has been written: a partial explanation covering the opening of
+            # the video is worth more than none, and far more than spending
+            # the next hour discovering the same thing 26 more times.
+            logger.warning(
+                "%s: quota exhausted at part %d/%d; keeping the %d sections "
+                "already written and stopping",
+                video_id, i, len(bounds), len(explanation),
+            )
+            quota_hit = True
+            break
         except llm.LLMError as exc:
             # One window failing must not discard the others. A 12-hour video
             # is 29 calls; treating any single failure as fatal sent the whole
@@ -519,6 +545,11 @@ def _generate_windowed(
             time.sleep(config.UNDERSTANDING_WINDOW_PAUSE_SEC)
 
     if not explanation:
+        if quota_hit:
+            raise llm.LLMQuotaExceeded(
+                "the language-model quota was exhausted before any part of "
+                "this video could be explained"
+            )
         raise llm.LLMError(
             f"every one of the {len(bounds)} windows failed; nothing to summarise"
         )

@@ -55,12 +55,48 @@ def _retry_delay_sec(response) -> float:
     return 0.0
 
 
+def _quota_is_exhausted(response) -> bool:
+    """Whether a 429 means the quota is spent rather than momentarily busy.
+
+    The two are not the same failure and must not be treated alike. A
+    per-minute limit clears in under a minute and is worth waiting for; a
+    per-day quota does not clear today, and waiting for it is pure loss.
+
+    Gemini distinguishes them in the error body: a QuotaFailure violation
+    names the quota it belongs to, and the daily ones say so in the id. An
+    11-hour video is 28 calls, and treating a spent daily quota as transient
+    cost 27 x 3 retries x 120 s of sleeping before the run gave up — close to
+    three hours of doing nothing.
+    """
+    try:
+        for detail in (response.json().get("error", {}).get("details") or []):
+            for violation in detail.get("violations") or []:
+                quota_id = str(violation.get("quotaId") or "")
+                if "PerDay" in quota_id:
+                    return True
+        text = response.text.lower()
+        # Fallback on wording when the structured detail is absent.
+        return "quota" in text and ("per day" in text or "billing" in text)
+    except Exception:
+        return False
+
+
 class LLMError(RuntimeError):
     """Raised when the model call fails or returns something unusable."""
 
 
 class LLMUnavailable(LLMError):
     """Raised when no provider is configured — callers fall back to local models."""
+
+
+class LLMQuotaExceeded(LLMError):
+    """Raised when the provider's quota is spent for the period.
+
+    Separate from LLMError because the right response differs: a caller making
+    many calls in sequence should abandon the rest rather than attempt each
+    one, and a caller with an expensive local fallback should weigh whether
+    running it is worth more than failing quickly.
+    """
 
 
 @dataclass
@@ -199,6 +235,13 @@ class LLMClient:
                 # seconds: the quota is per minute, so an exponential ramp that
                 # tops out around six seconds just burns the retries and fails.
                 # Gemini says how long to wait in the error body; honour it.
+                if response.status_code == 429 and _quota_is_exhausted(response):
+                    # Nothing to wait for. Sleeping here does not get the
+                    # quota back; it only delays telling the caller.
+                    raise LLMQuotaExceeded(
+                        "the provider's quota is exhausted for this period "
+                        f"(HTTP 429): {response.text[:200]}"
+                    )
                 if response.status_code == 429:
                     delay = _retry_delay_sec(response) or min(30 * attempt, 90)
                 else:

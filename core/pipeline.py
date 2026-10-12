@@ -58,9 +58,37 @@ def _understand_or_summarize(
         except understand.llm.LLMError as exc:
             if not config.UNDERSTANDING_FALLBACK_TO_LOCAL:
                 raise
+
+            # The local map-reduce is a reasonable consolation on a short
+            # video and a trap on a long one. On an eleven-hour recording it
+            # ran for the better part of three hours and produced text nobody
+            # could learn from, while the quiz, flashcards and audio overview
+            # all stayed switched off because they need the explanation the
+            # LLM would have written. Failing in a minute with a reason the
+            # reader can act on beats that, and everything up to this stage is
+            # already cached, so a retry only redoes this step.
+            duration_min = (cache.read_json(video_id, "meta") or {}).get(
+                "duration_sec", 0.0
+            ) / 60.0
+            if duration_min > config.LOCAL_FALLBACK_MAX_VIDEO_MIN:
+                quota = isinstance(exc, understand.llm.LLMQuotaExceeded)
+                raise understand.llm.LLMError(
+                    (
+                        "The language model's quota is exhausted, "
+                        if quota
+                        else "The language model could not be reached, "
+                    )
+                    + f"and this video is {duration_min / 60:.1f} hours long. "
+                    "The offline summariser would take hours on it and could "
+                    "not produce the explanation the quiz, flashcards and "
+                    "audio overview are built from, so the run stopped here "
+                    "instead. Everything already processed is cached: "
+                    "re-running once the quota resets redoes only this step."
+                ) from exc
+
             logger.warning(
                 "LLM understanding failed (%s); falling back to local summarizer",
-                understand.llm.LLMError.__name__, exc_info=True,
+                type(exc).__name__, exc_info=True,
             )
     return summarize.summarize(video_id, force, plan)
 
