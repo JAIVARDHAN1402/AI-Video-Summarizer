@@ -333,6 +333,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LLM_BASE_URL = os.getenv("VS_LLM_BASE_URL")
 LLM_API_KEY = os.getenv("VS_LLM_API_KEY")
 LLM_MODEL = os.getenv("VS_LLM_MODEL")
+# Free tiers cap the completion far below Gemini's 32k, and asking for
+# more is a 400 before any work happens rather than a shorter reply. Clamp
+# what the OpenAI-compatible client requests, so one provider's ceiling
+# does not mean retuning UNDERSTANDING_MAX_OUTPUT_TOKENS for all of them.
+LLM_MAX_OUTPUT_TOKENS = int(os.getenv("VS_LLM_MAX_OUTPUT_TOKENS", "8192"))
 USE_GEMINI = GEMINI_API_KEY is not None
 GEMINI_MODEL = os.getenv("VS_GEMINI_QA_MODEL", "gemini-2.5-flash")  # Q&A backend (core/qa.py)
 

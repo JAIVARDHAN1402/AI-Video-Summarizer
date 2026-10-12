@@ -104,3 +104,61 @@ def test_gemini_is_used_when_no_endpoint_is_configured(monkeypatch):
         assert isinstance(llm.get_client(), llm.LLMClient)
     finally:
         llm.reset_client()
+
+
+class RateLimitResponse:
+    """A 429 whose body says the request itself is too big."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.status_code = 429
+
+    def json(self):
+        return {"error": {"message": self.text, "code": "rate_limit_exceeded"}}
+
+
+def test_an_oversized_request_is_not_retried():
+    """A window of a long transcript can exceed the whole per-minute token
+    allowance. That is permanent, so waiting three times is wasted."""
+    body = ("Request too large for model `some-free-model` on tokens per "
+            "minute (TPM): Limit 8000, Requested 11500.")
+    assert llm._request_exceeds_rate_limit(RateLimitResponse(body)) is True
+
+
+def test_a_plain_busy_429_is_still_retried():
+    assert llm._request_exceeds_rate_limit(
+        RateLimitResponse("Rate limit reached, please slow down")) is False
+
+
+def test_an_oversized_request_is_not_mistaken_for_a_spent_quota():
+    """The two need different handling: one narrows the window, the other
+    waits for tomorrow."""
+    body = "Request too large for model on tokens per minute (TPM): Requested 11500."
+    assert llm._quota_is_exhausted(RateLimitResponse(body)) is False
+
+
+def test_the_completion_request_is_clamped_to_the_provider_ceiling(client, monkeypatch):
+    """UNDERSTANDING_MAX_OUTPUT_TOKENS is sized for Gemini's 32k. Sending that
+    to a model whose ceiling is 8192 is a 400, not a shorter reply."""
+    monkeypatch.setattr(llm.config, "LLM_MAX_OUTPUT_TOKENS", 8192)
+    sent = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "ok"}')
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent.update(json)
+        return FakeResponse()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    client.generate_json("sys", "prompt", max_output_tokens=32768)
+    assert sent["max_tokens"] == 8192
+
+    client.generate_json("sys", "prompt", max_output_tokens=2048)
+    assert sent["max_tokens"] == 2048, "a smaller ask must not be raised"

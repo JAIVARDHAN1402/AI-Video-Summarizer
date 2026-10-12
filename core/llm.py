@@ -89,6 +89,21 @@ class LLMUnavailable(LLMError):
     """Raised when no provider is configured — callers fall back to local models."""
 
 
+def _request_exceeds_rate_limit(response) -> bool:
+    """Whether a 429 says this one request can never fit the rate limit.
+
+    Free tiers meter tokens per minute as well as per day, and a single window
+    of a long transcript can be larger than the whole per-minute allowance.
+    Waiting does not help here: the request is too big, not too early.
+    """
+    try:
+        text = response.text.lower()
+    except Exception:
+        return False
+    return "request too large" in text or (
+        "tokens per minute" in text and "requested" in text)
+
+
 class LLMQuotaExceeded(LLMError):
     """Raised when the provider's quota is spent for the period.
 
@@ -419,7 +434,7 @@ class OpenAICompatibleClient:
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature,
-            "max_tokens": max_output_tokens,
+            "max_tokens": min(max_output_tokens, config.LLM_MAX_OUTPUT_TOKENS),
         }
         if schema:
             body["response_format"] = {"type": "json_object"}
@@ -454,6 +469,13 @@ class OpenAICompatibleClient:
                     raise LLMQuotaExceeded(
                         "the provider's quota is exhausted for this period "
                         f"(HTTP 429): {response.text[:200]}"
+                    )
+                if response.status_code == 429 and _request_exceeds_rate_limit(response):
+                    raise LLMError(
+                        "this request is larger than the provider's per-minute "
+                        "token allowance, so retrying cannot help. Lower "
+                        "VS_UNDERSTANDING_WINDOW_MIN so each window sends less, "
+                        f"or use a provider with a higher limit: {response.text[:200]}"
                     )
                 delay = _retry_delay_sec(response) or min(2 ** attempt, 30)
                 logger.warning("LLM attempt %d/%d transient (%s); waiting %.0fs",
