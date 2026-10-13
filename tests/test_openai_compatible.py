@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+import config
 from core import llm
 
 
@@ -272,8 +273,23 @@ def test_openrouter_is_told_not_to_think_by_default(openrouter):
     assert openrouter._reasoning(0) == {"enabled": False}
 
 
-def test_a_thinking_budget_is_passed_through(openrouter):
-    assert openrouter._reasoning(2048) == {"max_tokens": 2048}
+def test_a_thinking_budget_does_not_switch_reasoning_on(openrouter):
+    """thinking_budget means something different here than on Gemini: the
+    thinking comes out of the same max_tokens as the answer, and the budget is
+    advisory. A coding video asking for 4096 was measured spending 6385 and
+    returning an unparseable reply, so every window of a 3-hour video failed."""
+    assert openrouter._reasoning(4096) == {"enabled": False}
+
+
+def test_reasoning_can_be_turned_back_on_with_its_own_headroom(openrouter, monkeypatch):
+    monkeypatch.setattr(llm.config, "LLM_REASONING", "1")
+    monkeypatch.setattr(llm.config, "LLM_MAX_OUTPUT_TOKENS", 8192)
+    assert openrouter._reasoning(4096) == {"max_tokens": 4096}
+    assert openrouter._output_cap(32768, 4096) == 8192 + 4096,         "the thinking must be added to the cap, not taken out of the answer"
+
+
+def test_the_cap_is_not_inflated_when_reasoning_is_off(openrouter):
+    assert openrouter._output_cap(32768, 4096) == config.LLM_MAX_OUTPUT_TOKENS
 
 
 def test_other_providers_are_not_sent_an_openrouter_extension(monkeypatch):
@@ -293,3 +309,85 @@ def test_the_switch_can_be_forced_on_for_any_provider(monkeypatch):
     monkeypatch.setattr(llm.config, "LLM_REASONING", "0")
     assert llm.OpenAICompatibleClient()._reasoning(4096) == {"enabled": False}, \
         "forcing it off must win over a requested budget"
+
+
+# --- a reply that was cut off --------------------------------------------
+# How much a window needs varies with how dense it is. One part of the SQL
+# video was lost to the cap while the next part finished in 1,614 tokens.
+
+def test_a_truncated_reply_is_recognised():
+    cut = {"choices": [{"message": {"content": '{"explanation":[{"heading":"Set'},
+                        "finish_reason": "length"}]}
+    assert llm.OpenAICompatibleClient._was_cut_off(cut) is True
+
+
+def test_an_empty_reply_at_the_cap_is_recognised():
+    assert llm.OpenAICompatibleClient._was_cut_off(
+        {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}) is True
+
+
+def test_a_complete_object_at_the_cap_is_not_retried():
+    """It said 'length' but the JSON closed, so the answer is usable and a
+    second call would spend a request for nothing."""
+    assert llm.OpenAICompatibleClient._was_cut_off(
+        {"choices": [{"message": {"content": '{"ok":true}'},
+                      "finish_reason": "length"}]}) is False
+
+
+def test_a_normal_reply_is_not_retried():
+    assert llm.OpenAICompatibleClient._was_cut_off(
+        {"choices": [{"message": {"content": '{"ok":true}'},
+                      "finish_reason": "stop"}]}) is False
+
+
+def test_a_cut_off_window_is_asked_again_with_room(client, monkeypatch):
+    caps = []
+
+    class Cut:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"explanation":[{"head'},
+                                 "finish_reason": "length"}]}
+
+    class Ok:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "second time lucky"}')
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        caps.append(json["max_tokens"])
+        return Cut() if len(caps) == 1 else Ok()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(llm.config, "LLM_MAX_OUTPUT_TOKENS", 8192)
+
+    result = client.generate_json("sys", "prompt", max_output_tokens=8192)
+    assert result.data == {"overview": "second time lucky"}
+    assert caps == [8192, 32768], "it should grow once, then stop growing"
+
+
+def test_it_does_not_grow_for_ever(client, monkeypatch):
+    """Two cut-off replies in a row is a prompt problem, not a cap problem."""
+    calls = []
+
+    class Cut:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"explanation":[{"head'},
+                                 "finish_reason": "length"}]}
+
+    import requests
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None:
+                        (calls.append(json["max_tokens"]), Cut())[1])
+
+    with pytest.raises(llm.LLMError, match="output limit"):
+        client.generate_json("sys", "prompt", max_output_tokens=8192)
+    assert len(calls) == 2, "one grow, then report it"

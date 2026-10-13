@@ -36,6 +36,11 @@ _GEMINI_ENDPOINT = (
 # context well below the ceiling; callers trim to fit and note when they did.
 MAX_CONTEXT_CHARS = 600_000
 
+# The ceiling a retry may grow the output cap to after a reply was cut off.
+# Above the model's own limit the request is rejected outright, so this
+# stays within what the free tiers advertise.
+MAX_GROWN_OUTPUT_TOKENS = 32_768
+
 # (caption, jpeg_bytes) pair for a keyframe sent to a multimodal model.
 ImageRef = tuple[str, bytes]
 
@@ -408,20 +413,37 @@ class OpenAICompatibleClient:
     def _reasoning(self, thinking_budget: int) -> Optional[dict[str, Any]]:
         """The provider switch for hidden reasoning, when it takes one.
 
-        A reasoning model spends the output budget thinking before it writes,
-        which on a schema-shaped reply shows up as JSON truncated mid-object
-        rather than as a slower answer. Only OpenRouter documents this field,
-        so it is not sent blind to an endpoint that might reject it.
+        Reasoning is switched off here whatever budget the caller asked for,
+        which is not what thinking_budget means on the Gemini client. There it
+        buys a separate allowance to plan with. Here the thinking is charged
+        against the same max_tokens as the answer, and the budget is advisory:
+        asking for 4096 was measured spending 6385 and leaving an unparseable
+        reply, so a caller that wanted a better answer got no answer at all.
+        VS_LLM_REASONING=1 turns it back on for anyone who wants it, and then
+        the budget is added to the cap rather than taken out of it.
+
+        Only OpenRouter documents the field, so it is not sent blind to an
+        endpoint that might reject an unknown key.
         """
         forced = config.LLM_REASONING
-        if forced is not None:
-            if forced in ("0", "false", "False"):
-                return {"enabled": False}
-        elif "openrouter.ai" not in self._base_url:
+        if forced is None and "openrouter.ai" not in self._base_url:
             return None
-        if thinking_budget > 0:
+        if forced in ("1", "true", "True") and thinking_budget > 0:
             return {"max_tokens": thinking_budget}
         return {"enabled": False}
+
+    def _output_cap(self, max_output_tokens: int, thinking_budget: int) -> int:
+        """How many tokens to allow, given the reply has to fit in them.
+
+        When reasoning is on the model spends this budget twice over, so the
+        requested thinking is added rather than silently eaten out of the
+        answer.
+        """
+        cap = min(max_output_tokens, config.LLM_MAX_OUTPUT_TOKENS)
+        reasoning = self._reasoning(thinking_budget)
+        if reasoning and "max_tokens" in reasoning:
+            cap += int(reasoning["max_tokens"])
+        return cap
 
     @staticmethod
     def _user_content(prompt: str, images: list["ImageRef"]) -> Any:
@@ -495,7 +517,7 @@ class OpenAICompatibleClient:
                      "content": self._user_content(prompt, with_images)},
                 ],
                 "temperature": temperature,
-                "max_tokens": min(max_output_tokens, config.LLM_MAX_OUTPUT_TOKENS),
+                "max_tokens": self._output_cap(max_output_tokens, thinking_budget),
             }
             if schema:
                 body["response_format"] = {"type": "json_object"}
@@ -514,7 +536,8 @@ class OpenAICompatibleClient:
 
         started = time.perf_counter()
         last_error = ""
-        for attempt in range(1, retries + 1):
+        grown = False
+        for attempt in range(1, retries + 2):
             try:
                 response = requests.post(url, headers=headers, json=body, timeout=600)
             except Exception as exc:                      # network-level
@@ -525,8 +548,23 @@ class OpenAICompatibleClient:
                 continue
 
             if response.status_code == 200:
+                payload = response.json()
+                # How much a window needs varies with how dense it is: the
+                # same cap that holds one part of a video comfortably cuts the
+                # next one off mid-object, and that window is then lost from
+                # the explanation entirely. Ask again with room rather than
+                # making the cap large for every call.
+                if self._was_cut_off(payload) and not grown:
+                    grown = True
+                    body["max_tokens"] = min(body["max_tokens"] * 4,
+                                             MAX_GROWN_OUTPUT_TOKENS)
+                    logger.warning(
+                        "%s hit the output limit; retrying this call with "
+                        "max_tokens=%d", self._model, body["max_tokens"],
+                    )
+                    continue
                 return self._parse(
-                    response.json(), len(prompt),
+                    payload, len(prompt),
                     time.perf_counter() - started, truncated,
                 )
 
@@ -569,6 +607,23 @@ class OpenAICompatibleClient:
             )
 
         raise LLMError(f"call failed after {retries} attempts. Last error: {last_error}")
+
+    @staticmethod
+    def _was_cut_off(payload: dict[str, Any]) -> bool:
+        """Whether the reply stopped because it ran out of output budget."""
+        choices = payload.get("choices") or []
+        if not choices:
+            return False
+        if choices[0].get("finish_reason") != "length":
+            return False
+        text = ((choices[0].get("message") or {}).get("content") or "").strip()
+        if not text:
+            return True
+        try:
+            json.loads(text)
+        except json.JSONDecodeError:
+            return True
+        return False      # it finished the object and then ran out; usable
 
     def _parse(
         self, payload: dict[str, Any], prompt_chars: int, elapsed: float, truncated: bool
