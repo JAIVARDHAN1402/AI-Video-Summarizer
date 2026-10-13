@@ -333,6 +333,28 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LLM_BASE_URL = os.getenv("VS_LLM_BASE_URL")
 LLM_API_KEY = os.getenv("VS_LLM_API_KEY")
 LLM_MODEL = os.getenv("VS_LLM_MODEL")
+
+
+def _numbered_providers() -> list[dict[str, str]]:
+    """Extra endpoints, as VS_LLM2_*, VS_LLM3_* and so on.
+
+    A daily quota belongs to an account, so a second account is a second
+    quota — and that is the only thing that raises the ceiling without
+    spending money. One eleven-hour video fully explored is about 33 calls
+    against a free allowance of 50, so one account is roughly one and a half
+    videos a day; three accounts is four or five.
+    """
+    found: list[dict[str, str]] = []
+    for n in range(2, 7):
+        base = os.getenv(f"VS_LLM{n}_BASE_URL")
+        key = os.getenv(f"VS_LLM{n}_API_KEY")
+        model = os.getenv(f"VS_LLM{n}_MODEL")
+        if base and key and model:
+            found.append({"base_url": base, "api_key": key, "model": model})
+    return found
+
+
+LLM_EXTRA_PROVIDERS = _numbered_providers()
 # Free tiers cap the completion far below Gemini's 32k, and asking for
 # more is a 400 before any work happens rather than a shorter reply. Clamp
 # what the OpenAI-compatible client requests, so one provider's ceiling

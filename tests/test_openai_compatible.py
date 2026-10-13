@@ -638,3 +638,76 @@ def test_both_configured_means_chained(monkeypatch):
         assert isinstance(llm.get_client(), llm.ChainedClient)
     finally:
         llm.reset_client()
+
+
+# --- more than two accounts ----------------------------------------------
+# A daily quota belongs to an account, so a second account is a second quota.
+# One 11-hour video fully explored is ~33 calls against a free allowance of
+# 50: one account is a video and a half a day, three is four or five.
+
+def test_three_accounts_are_used_in_order():
+    a = FakeProvider("a", raises=llm.LLMQuotaExceeded("spent"))
+    b = FakeProvider("b", raises=llm.LLMQuotaExceeded("spent"))
+    c = FakeProvider("c")
+    chained = llm.ChainedClient(a, b, c)
+    assert chained.generate_json("s", "p").data == {"from": "c"}
+    assert (a.calls, b.calls, c.calls) == (1, 1, 1)
+
+
+def test_a_spent_account_is_asked_once_for_the_whole_run():
+    """Otherwise a dead account costs one wasted request per window."""
+    a = FakeProvider("a", raises=llm.LLMQuotaExceeded("spent"))
+    b = FakeProvider("b")
+    chained = llm.ChainedClient(a, b)
+    for _ in range(5):
+        chained.generate_json("s", "p")
+    assert a.calls == 1
+    assert b.calls == 5
+
+
+def test_when_every_account_is_spent_that_is_what_is_reported():
+    a = FakeProvider("a", raises=llm.LLMQuotaExceeded("spent"))
+    b = FakeProvider("b", raises=llm.LLMQuotaExceeded("also spent"))
+    with pytest.raises(llm.LLMQuotaExceeded):
+        llm.ChainedClient(a, b).generate_json("s", "p")
+
+
+def test_an_unavailable_account_is_skipped_not_counted():
+    a = FakeProvider("a", available=False)
+    b = FakeProvider("b")
+    chained = llm.ChainedClient(a, b)
+    assert chained.model == "b"
+    assert chained.generate_json("s", "p").data == {"from": "b"}
+    assert a.calls == 0
+
+
+def test_the_chain_can_be_described_for_the_log():
+    a = FakeProvider("a")
+    b = FakeProvider("b")
+    assert llm.ChainedClient(a, b).describe() == "a then b"
+
+
+def test_extra_accounts_need_all_three_settings(monkeypatch):
+    """A half-filled block is a typo, and silently ignoring two of its three
+    values would look like the account simply never being reached."""
+    monkeypatch.setenv("VS_LLM2_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("VS_LLM2_API_KEY", "k2")
+    monkeypatch.delenv("VS_LLM2_MODEL", raising=False)
+    assert config._numbered_providers() == []
+
+    monkeypatch.setenv("VS_LLM2_MODEL", "some/model:free")
+    found = config._numbered_providers()
+    assert found == [{"base_url": "https://openrouter.ai/api/v1",
+                      "api_key": "k2", "model": "some/model:free"}]
+
+
+def test_an_extra_account_can_point_somewhere_else_entirely(monkeypatch):
+    """The second account is usually a second key at the same provider, but
+    nothing stops it being a different one."""
+    monkeypatch.setattr(llm.config, "LLM_REASONING", None)
+    client = llm.OpenAICompatibleClient(
+        base_url="https://api.groq.com/openai/v1", api_key="gsk_x",
+        model="llama-3.3-70b-versatile")
+    assert client.available is True
+    assert client.model == "llama-3.3-70b-versatile"
+    assert client._reasoning(0) is None, "not an OpenRouter extension here"

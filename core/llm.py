@@ -381,49 +381,66 @@ _client: Optional[LLMClient] = None
 
 
 class ChainedClient:
-    """Two providers, the second used only once the first is spent.
+    """Several accounts in order, each used until its quota is spent.
 
-    Both free tiers are generous enough for a day of work and neither is
-    enough on its own: an eleven-hour video is seventeen calls, and the
-    accounts are metered per day. Keeping one configured as a spare is what
-    turns "come back tomorrow" into "this one takes a little longer".
+    A daily quota belongs to an account, so a second account is a second
+    quota — and short of paying, that is the only thing that raises the
+    ceiling. One eleven-hour video fully explored is about 33 calls against a
+    free allowance of 50: one account is a video and a half a day, three
+    accounts is four or five, and the difference is whether a long video can
+    be processed at all on the day it is wanted.
 
-    Only a spent quota hands over. A model that returned bad JSON, or an
-    endpoint having a bad minute, is the first provider's own business and it
-    retries that itself; switching on those would quietly spend the spare on
-    problems that were about to resolve.
+    Only a spent quota moves on. A model that returned bad JSON, or an
+    endpoint having a bad minute, is that provider's own business and it
+    retries that itself; moving on for those would quietly spend the next
+    account on problems that were about to resolve. Once an account is known
+    to be spent it is not asked again, so the cost of a dead account is one
+    request for the whole run, not one per window.
     """
 
-    def __init__(self, primary, spare) -> None:
-        self._primary = primary
-        self._spare = spare
-        self._primary_spent = False
+    def __init__(self, *providers) -> None:
+        self._providers = [p for p in providers if p is not None]
+        self._spent: set[int] = set()
 
     @property
     def available(self) -> bool:
-        return self._primary.available or self._spare.available
+        return any(p.available for p in self._providers)
 
     @property
     def model(self) -> str:
-        return self._current.model
+        live = self._live()
+        return live[0].model if live else ""
 
-    @property
-    def _current(self):
-        return self._spare if self._primary_spent else self._primary
+    def _live(self) -> list:
+        return [p for i, p in enumerate(self._providers)
+                if p.available and i not in self._spent]
+
+    def describe(self) -> str:
+        return " then ".join(
+            f"{p.model}{' (spent)' if i in self._spent else ''}"
+            for i, p in enumerate(self._providers) if p.available
+        )
 
     def generate_json(self, *args, **kwargs) -> LLMResult:
-        if not self._primary_spent:
+        last: Optional[BaseException] = None
+        for index, provider in enumerate(self._providers):
+            if index in self._spent or not provider.available:
+                continue
             try:
-                return self._primary.generate_json(*args, **kwargs)
+                return provider.generate_json(*args, **kwargs)
             except LLMQuotaExceeded as exc:
-                if not self._spare.available:
-                    raise
+                last = exc
+                self._spent.add(index)
+                remaining = self._live()
                 logger.warning(
-                    "%s is out of quota (%s); the rest of this run uses %s",
-                    self._primary.model, str(exc)[:160], self._spare.model,
+                    "%s is out of quota (%s); %s",
+                    provider.model, str(exc)[:160],
+                    f"the rest of this run uses {remaining[0].model}"
+                    if remaining else "no other account is configured",
                 )
-                self._primary_spent = True
-        return self._spare.generate_json(*args, **kwargs)
+        if last is not None:
+            raise last
+        raise LLMUnavailable("no LLM provider configured")
 
 
 def get_client():
@@ -437,14 +454,16 @@ def get_client():
     """
     global _client
     if _client is None:
-        openai_compatible = OpenAICompatibleClient()
-        gemini = LLMClient()
-        if openai_compatible.available and gemini.available:
-            _client = ChainedClient(openai_compatible, gemini)
-            logger.info("LLM provider: %s, falling back to %s when its quota is spent",
-                        openai_compatible.model, gemini.model)
+        candidates = [OpenAICompatibleClient()]
+        candidates += [OpenAICompatibleClient(**p) for p in config.LLM_EXTRA_PROVIDERS]
+        candidates.append(LLMClient())
+        live = [c for c in candidates if c.available]
+
+        if len(live) > 1:
+            _client = ChainedClient(*live)
+            logger.info("LLM providers: %s", _client.describe())
         else:
-            _client = openai_compatible if openai_compatible.available else gemini
+            _client = live[0] if live else candidates[0]
             logger.info("LLM provider: %s (%s)",
                         type(_client).__name__,
                         _client.model if _client.available else "unconfigured")
@@ -483,15 +502,19 @@ def reset_client() -> None:
 class OpenAICompatibleClient:
     """Chat-completions client for any OpenAI-shaped endpoint."""
 
-    def __init__(self) -> None:
-        self._api_key = config.LLM_API_KEY
-        self._base_url = (config.LLM_BASE_URL or "").rstrip("/")
+    def __init__(self, base_url=None, api_key=None, model=None) -> None:
+        # Defaults come from config so the common single-provider case needs
+        # no arguments; the chain passes each extra account explicitly.
+        self._api_key = api_key if api_key is not None else config.LLM_API_KEY
+        self._base_url = ((base_url if base_url is not None else config.LLM_BASE_URL)
+                          or "").rstrip("/")
         # A comma-separated VS_LLM_MODEL is a preference order, not a pool.
         # Free endpoints go down for stretches — ten of thirteen windows of one
         # video failed on a model that had been answering fine an hour before —
         # and naming a second one turns that from a failed run into a slower
         # one. The first is used until it stops answering.
-        self._models = [m.strip() for m in (config.LLM_MODEL or "").split(",") if m.strip()]
+        spec = model if model is not None else config.LLM_MODEL
+        self._models = [m.strip() for m in (spec or "").split(",") if m.strip()]
         self._model = self._models[0] if self._models else ""
         self._warned_images = False
 
