@@ -583,22 +583,65 @@ def _generate_windowed(
     if vtype is VideoType.MEETING:
         reduce_prompt += " This is a meeting: also fill 'meeting' with decisions and action items."
 
-    reduced = client.generate_json(
-        _PERSONA_BY_TYPE[vtype], reduce_prompt,
-        schema=_REDUCE_SCHEMA,
-        temperature=config.UNDERSTANDING_TEMPERATURE,
-        max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
-        thinking_budget=thinking,
-    )
+    # The reduce is one more call to the same flaky endpoint, and it comes
+    # after every window has already been paid for. Letting it take the whole
+    # run down with it threw away three windows of a five-hour video because
+    # the summary-of-summaries failed. A document without an overview is worth
+    # having; a failed run is not.
+    try:
+        reduced = client.generate_json(
+            _PERSONA_BY_TYPE[vtype], reduce_prompt,
+            schema=_REDUCE_SCHEMA,
+            temperature=config.UNDERSTANDING_TEMPERATURE,
+            max_output_tokens=config.UNDERSTANDING_MAX_OUTPUT_TOKENS,
+            thinking_budget=thinking,
+        )
+        reduced_data, reduced_model = reduced.data or {}, reduced.model
+    except llm.LLMError as exc:
+        logger.warning(
+            "%s: the overall summary failed (%s); keeping the %d sections "
+            "already written", video_id, exc, len(explanation),
+        )
+        reduced_data, reduced_model = _fallback_overview(meta, explanation, chapters), model
+
     data = {
-        **(reduced.data or {}),
+        **reduced_data,
         "explanation": explanation,
         "chapters": chapters,
         "scene_notes": scene_notes,
         "windows": len(bounds),
         "windows_failed": len(failed),
     }
-    return data, (reduced.model or model)
+    return data, (reduced_model or model)
+
+
+def _fallback_overview(
+    meta: dict[str, Any], explanation: list[dict[str, Any]],
+    chapters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Stand in for the overall summary when the call for it failed.
+
+    Assembled from work already done rather than from the model, so it costs
+    nothing and cannot fail. It is plainly thinner than the written version,
+    and says so, so nobody mistakes it for one.
+    """
+    headings = [c.get("title") or "" for c in chapters if c.get("title")]
+    if not headings:
+        headings = [s.get("heading") or "" for s in explanation]
+    covered = ", ".join(h for h in headings[:12] if h)
+    title = meta.get("title") or "This video"
+    return {
+        "overview": (
+            f"{title} is explained below section by section. The overall "
+            "summary could not be written this time — the provider failed on "
+            "that last step — so this lists what the video covers instead: "
+            f"{covered}."
+        ),
+        "summary": covered,
+        "key_points": [s.get("heading") for s in explanation[:10] if s.get("heading")],
+        "glossary": [],
+        "overview_is_fallback": True,
+    }
 
 
 # --- Public API ------------------------------------------------------------------

@@ -391,3 +391,178 @@ def test_it_does_not_grow_for_ever(client, monkeypatch):
     with pytest.raises(llm.LLMError, match="output limit"):
         client.generate_json("sys", "prompt", max_output_tokens=8192)
     assert len(calls) == 2, "one grow, then report it"
+
+
+# --- an upstream failure dressed as success -------------------------------
+# A gateway in front of several providers answers 200 and reports the
+# provider's trouble in the body. Both of these were fatal on first sight,
+# which cost a five-hour video every window it had already paid for.
+
+def test_no_choices_is_an_upstream_failure():
+    assert llm.OpenAICompatibleClient._upstream_failed({"choices": []})
+
+
+def test_finish_reason_error_is_an_upstream_failure():
+    assert llm.OpenAICompatibleClient._upstream_failed(
+        {"choices": [{"message": {"content": '{"partial":'}, "finish_reason": "error"}]})
+
+
+def test_an_error_body_is_an_upstream_failure():
+    assert "overloaded" in llm.OpenAICompatibleClient._upstream_failed(
+        {"error": {"message": "upstream overloaded"}, "choices": []})
+
+
+def test_a_good_reply_is_not_an_upstream_failure():
+    assert llm.OpenAICompatibleClient._upstream_failed(
+        {"choices": [{"message": {"content": '{"ok":true}'}, "finish_reason": "stop"}]}) == ""
+
+
+def test_an_upstream_failure_is_retried_not_raised(client, monkeypatch):
+    calls = []
+
+    class Broken:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": [], "error": {"message": "upstream overloaded"}}
+
+    class Ok:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "worked on the retry"}')
+
+    import requests
+    monkeypatch.setattr(time := __import__("time"), "sleep", lambda s: None)
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None:
+                        (calls.append(1), Broken() if len(calls) < 3 else Ok())[1])
+
+    result = client.generate_json("sys", "prompt")
+    assert result.data == {"overview": "worked on the retry"}
+    assert len(calls) == 3, "it should have kept trying"
+
+
+def test_an_upstream_failure_that_never_clears_is_reported(client, monkeypatch):
+    class Broken:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": []}
+
+    import requests
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None: Broken())
+
+    with pytest.raises(llm.LLMError, match="no choices"):
+        client.generate_json("sys", "prompt")
+
+
+# --- a second model, for when the first stops answering -------------------
+# Ten of thirteen windows of one video failed on a model that had been
+# answering fine an hour earlier. Naming a fallback turns that from a failed
+# run into a slower one.
+
+@pytest.fixture
+def two_models(monkeypatch):
+    monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(llm.config, "LLM_MODEL", "first/model:free, second/model:free")
+    monkeypatch.setattr(llm.config, "LLM_REASONING", None)
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+    return llm.OpenAICompatibleClient()
+
+
+def test_a_comma_separated_setting_is_a_preference_order(two_models):
+    assert two_models._models == ["first/model:free", "second/model:free"]
+    assert two_models.model == "first/model:free", "the first is used until it fails"
+
+
+def test_the_fallback_is_used_when_the_first_stops_answering(two_models, monkeypatch):
+    tried = []
+
+    class Broken:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": []}
+
+    class Ok:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "the second one answered"}')
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        tried.append(json["model"])
+        return Ok() if json["model"] == "second/model:free" else Broken()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    result = two_models.generate_json("sys", "prompt")
+    assert result.data == {"overview": "the second one answered"}
+    assert tried[0] == "first/model:free"
+    assert "second/model:free" in tried
+
+
+def test_the_first_model_is_not_abandoned_while_it_works(two_models, monkeypatch):
+    tried = []
+
+    class Ok:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply('{"overview": "fine"}')
+
+    import requests
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None:
+                        (tried.append(json["model"]), Ok())[1])
+
+    two_models.generate_json("sys", "prompt")
+    assert tried == ["first/model:free"], "no need to spend a request on the spare"
+
+
+def test_a_spent_quota_is_not_worked_around_by_switching_model(two_models, monkeypatch):
+    """A per-day quota belongs to the account, not the model, so the second
+    one would fail identically — and the caller wants to keep partial work."""
+    class Spent:
+        status_code = 429
+        text = '{"error":{"details":[{"violations":[{"quotaId":"GenerateRequestsPerDay"}]}]}}'
+
+        def json(self):
+            return {"error": {"details": [
+                {"violations": [{"quotaId": "GenerateRequestsPerDayPerProject"}]}]}}
+
+    import requests
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None: Spent())
+
+    with pytest.raises(llm.LLMQuotaExceeded):
+        two_models.generate_json("sys", "prompt")
+
+
+def test_one_model_still_reports_its_own_error_plainly(client, monkeypatch):
+    class Broken:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": []}
+
+    import requests
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, timeout=None: Broken())
+
+    with pytest.raises(llm.LLMError) as exc:
+        client.generate_json("sys", "prompt")
+    assert "every configured model" not in str(exc.value)

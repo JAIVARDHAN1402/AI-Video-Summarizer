@@ -74,16 +74,49 @@ def _quota_is_exhausted(response) -> bool:
     three hours of doing nothing.
     """
     try:
-        for detail in (response.json().get("error", {}).get("details") or []):
+        body = response.json()
+        error = body.get("error") or {}
+        for detail in error.get("details") or []:
             for violation in detail.get("violations") or []:
                 quota_id = str(violation.get("quotaId") or "")
                 if "PerDay" in quota_id:
                     return True
+
+        # OpenRouter says it differently: a daily limit source, and a headers
+        # block whose remaining count is zero. Missing this cost twelve
+        # requests against a quota that was already spent, each preceded by a
+        # wait for it to clear.
+        meta = error.get("metadata") or {}
+        if "daily" in str(meta.get("limit_source") or "").lower():
+            return True
+        headers = meta.get("headers") or {}
+        if str(headers.get("X-RateLimit-Remaining", "")).strip() == "0":
+            return True
+
         text = response.text.lower()
-        # Fallback on wording when the structured detail is absent.
-        return "quota" in text and ("per day" in text or "billing" in text)
+        # Fallback on wording when no structured detail is present.
+        if "per-day" in text or "per day" in text:
+            return True
+        return "quota" in text and "billing" in text
     except Exception:
         return False
+
+
+def quota_resets_at(response) -> Optional[str]:
+    """When a spent quota comes back, as the provider reports it.
+
+    Worth carrying to the screen: "try again later" is not actionable, and
+    the reset is a plain epoch in the headers the gateway echoes back.
+    """
+    try:
+        headers = ((response.json().get("error") or {}).get("metadata") or {}).get("headers") or {}
+        raw = str(headers.get("X-RateLimit-Reset") or "").strip()
+        if not raw.isdigit():
+            return None
+        seconds = int(raw) / 1000 if len(raw) > 11 else int(raw)
+        return time.strftime("%H:%M on %d %b", time.localtime(seconds))
+    except Exception:
+        return None
 
 
 class LLMError(RuntimeError):
@@ -399,12 +432,18 @@ class OpenAICompatibleClient:
     def __init__(self) -> None:
         self._api_key = config.LLM_API_KEY
         self._base_url = (config.LLM_BASE_URL or "").rstrip("/")
-        self._model = config.LLM_MODEL
+        # A comma-separated VS_LLM_MODEL is a preference order, not a pool.
+        # Free endpoints go down for stretches — ten of thirteen windows of one
+        # video failed on a model that had been answering fine an hour before —
+        # and naming a second one turns that from a failed run into a slower
+        # one. The first is used until it stops answering.
+        self._models = [m.strip() for m in (config.LLM_MODEL or "").split(",") if m.strip()]
+        self._model = self._models[0] if self._models else ""
         self._warned_images = False
 
     @property
     def available(self) -> bool:
-        return bool(self._api_key and self._base_url and self._model)
+        return bool(self._api_key and self._base_url and self._models)
 
     @property
     def model(self) -> str:
@@ -535,6 +574,37 @@ class OpenAICompatibleClient:
         url = f"{self._base_url}/chat/completions"
 
         started = time.perf_counter()
+        failures: list[str] = []
+        for model_index, model_name in enumerate(self._models):
+            self._model = model_name
+            body["model"] = model_name
+            try:
+                return self._send(
+                    url, headers, body, build, images, prompt, truncated,
+                    started, retries,
+                )
+            except (LLMQuotaExceeded, LLMUnavailable):
+                raise
+            except LLMError as exc:
+                failures.append(f"{model_name}: {exc}")
+                if model_index + 1 < len(self._models):
+                    logger.warning(
+                        "%s is not answering (%s); falling back to %s",
+                        model_name, str(exc)[:140], self._models[model_index + 1],
+                    )
+
+        if len(failures) == 1:
+            raise LLMError(failures[0].split(": ", 1)[1])
+        raise LLMError("every configured model failed — " + " | ".join(failures))
+
+    def _send(
+        self, url: str, headers: dict[str, str], body: dict[str, Any],
+        build, images: list["ImageRef"], prompt: str, truncated: bool,
+        started: float, retries: int,
+    ) -> LLMResult:
+        """One model's attempts: retries, growing the cap, dropping images."""
+        import requests
+
         last_error = ""
         grown = False
         for attempt in range(1, retries + 2):
@@ -549,6 +619,16 @@ class OpenAICompatibleClient:
 
             if response.status_code == 200:
                 payload = response.json()
+                upstream = self._upstream_failed(payload)
+                if upstream and attempt <= retries:
+                    last_error = f"HTTP 200 but {upstream}"
+                    delay = min(2 ** attempt, 30)
+                    logger.warning(
+                        "LLM attempt %d/%d: %s; waiting %.0fs",
+                        attempt, retries, upstream, delay,
+                    )
+                    time.sleep(delay)
+                    continue
                 # How much a window needs varies with how dense it is: the
                 # same cap that holds one part of a video comfortably cuts the
                 # next one off mid-object, and that window is then lost from
@@ -571,9 +651,11 @@ class OpenAICompatibleClient:
             if response.status_code in (429, 500, 502, 503, 504):
                 last_error = f"HTTP {response.status_code}: {response.text[:300]}"
                 if response.status_code == 429 and _quota_is_exhausted(response):
+                    resets = quota_resets_at(response)
                     raise LLMQuotaExceeded(
-                        "the provider's quota is exhausted for this period "
-                        f"(HTTP 429): {response.text[:200]}"
+                        "the provider's quota is spent for this period"
+                        + (f"; it resets at {resets}" if resets else "")
+                        + f" (HTTP 429): {response.text[:200]}"
                     )
                 if response.status_code == 429 and _request_exceeds_rate_limit(response):
                     raise LLMError(
@@ -607,6 +689,26 @@ class OpenAICompatibleClient:
             )
 
         raise LLMError(f"call failed after {retries} attempts. Last error: {last_error}")
+
+    @staticmethod
+    def _upstream_failed(payload: dict[str, Any]) -> str:
+        """Why a 200 carries no usable answer, or "" when it does.
+
+        A gateway in front of several providers reports the provider's trouble
+        in the body of an otherwise successful response: no choices at all, or
+        a choice whose finish_reason is "error". Both were fatal on the first
+        occurrence, which is the wrong reading — they are the same transient
+        upstream hiccup that a 502 would be, and the next attempt usually
+        works.
+        """
+        if payload.get("error"):
+            return str(payload["error"])[:200]
+        choices = payload.get("choices") or []
+        if not choices:
+            return "the provider returned no choices"
+        if choices[0].get("finish_reason") == "error":
+            return "the provider stopped with an error part-way through"
+        return ""
 
     @staticmethod
     def _was_cut_off(payload: dict[str, Any]) -> bool:

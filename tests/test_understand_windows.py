@@ -96,3 +96,79 @@ def test_the_configured_cap_is_applied():
     )
     assert len(bounds) <= config.UNDERSTANDING_MAX_WINDOWS
     assert len(bounds) < 27, "the cap should bite on a video this long"
+
+
+# --- the overall summary is one more call, and it can fail ----------------
+
+def test_a_failed_summary_leaves_the_sections_readable():
+    """Three windows of a five-hour video were thrown away because the
+    summary-of-summaries failed after them. A document without a written
+    overview is worth having; a failed run is not."""
+    sections = [
+        {"heading": "Joins", "body": "...", "start_sec": 0},
+        {"heading": "Window functions", "body": "...", "start_sec": 600},
+    ]
+    chapters = [{"title": "Joins", "start": 0}, {"title": "Window functions", "start": 600}]
+    out = understand._fallback_overview({"title": "SQL in 5 hours"}, sections, chapters)
+
+    assert out["overview_is_fallback"] is True
+    assert "Joins" in out["overview"] and "Window functions" in out["overview"]
+    assert "could not be written" in out["overview"], "it must not pass as the real thing"
+    assert out["key_points"] == ["Joins", "Window functions"]
+
+
+def test_the_fallback_works_without_chapters():
+    out = understand._fallback_overview(
+        {}, [{"heading": "Only section", "body": "x", "start_sec": 0}], [])
+    assert "Only section" in out["overview"]
+
+
+# --- the other gateway's way of saying the day is over --------------------
+# Missing this cost twelve requests against a quota that was already spent,
+# each one preceded by a wait for it to clear.
+
+class OpenRouterResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+        self.text = str(payload)
+        self.status_code = 429
+
+    def json(self):
+        return self._payload
+
+
+def _daily_limit(remaining: str = "0", reset: str = "1791936000000") -> dict:
+    return {"error": {
+        "message": "Rate limit exceeded: free-models-per-day. Add 10 credits "
+                   "to unlock 1000 free model requests per day",
+        "code": 429,
+        "metadata": {
+            "headers": {"X-RateLimit-Limit": "50",
+                        "X-RateLimit-Remaining": remaining,
+                        "X-RateLimit-Reset": reset},
+            "limit_source": "openrouter_free_tier_daily",
+        },
+    }}
+
+
+def test_a_daily_free_tier_limit_is_recognised_as_spent():
+    assert llm._quota_is_exhausted(OpenRouterResponse(_daily_limit())) is True
+
+
+def test_a_burst_limit_with_requests_left_is_still_worth_waiting_for():
+    body = {"error": {"message": "Rate limit exceeded: requests per minute",
+                      "code": 429,
+                      "metadata": {"headers": {"X-RateLimit-Remaining": "12"},
+                                   "limit_source": "openrouter_per_minute"}}}
+    assert llm._quota_is_exhausted(OpenRouterResponse(body)) is False
+
+
+def test_the_reset_time_is_read_back_for_the_reader():
+    """"Try again later" is not actionable; the gateway states the hour."""
+    when = llm.quota_resets_at(OpenRouterResponse(_daily_limit()))
+    assert when and ":" in when, when
+
+
+def test_a_missing_reset_time_is_not_an_error():
+    assert llm.quota_resets_at(
+        OpenRouterResponse({"error": {"message": "slow down", "metadata": {}}})) is None
