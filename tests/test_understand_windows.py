@@ -172,3 +172,13 @@ def test_the_reset_time_is_read_back_for_the_reader():
 def test_a_missing_reset_time_is_not_an_error():
     assert llm.quota_resets_at(
         OpenRouterResponse({"error": {"message": "slow down", "metadata": {}}})) is None
+
+
+def test_the_document_admits_when_it_is_incomplete():
+    """A missing part and a stand-in overview are not the same document as a
+    complete one, and the reader is owed that. Both were being dropped by the
+    whitelist that assembles the final document."""
+    import inspect
+    source = inspect.getsource(understand.generate)
+    assert '"windows_failed"' in source
+    assert '"overview_is_fallback"' in source

@@ -500,6 +500,28 @@ def answer(
     if llm.get_client().available:
         try:
             return _answer_with_llm(video_id, question, retrieved, history)
+        except llm.LLMQuotaExceeded as exc:
+            # The local path is extractive: it returns the passages that
+            # matched, lightly tidied. For "how do I find the second highest
+            # salary" that came back as an unrelated stretch of the lecture,
+            # labelled high confidence, which reads as the system answering
+            # badly rather than as it being unable to answer. Say which it is.
+            logger.warning("the model is out of quota; returning the passages only")
+            return {
+                "answer": (
+                    "The language model is out of quota, so this question "
+                    "cannot be answered properly right now. The passages of "
+                    "the video that match it most closely are cited below, "
+                    "and asking again once the quota resets will answer it."
+                ),
+                "sources": [
+                    {"start": c["start"], "end": c["end"], "text": c["text"]}
+                    for c in retrieved
+                ],
+                "confidence": "low",
+                "model_unavailable": True,
+                "detail": str(exc)[:200],
+            }
         except llm.LLMError:
             logger.warning("tutor answer failed; falling back to the local model",
                            exc_info=True)

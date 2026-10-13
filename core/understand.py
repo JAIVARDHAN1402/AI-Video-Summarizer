@@ -742,6 +742,11 @@ def generate(
         "input_truncated": truncated,
         "finish_reason": finish_reason,
         "windows": raw.get("windows", 1),
+        # Both say the document is less than it should be, and the reader
+        # is owed that: a missing part and a stand-in overview are not the
+        # same document as a complete one.
+        "windows_failed": raw.get("windows_failed", 0),
+        "overview_is_fallback": bool(raw.get("overview_is_fallback")),
         **data,
     }
     cache.write_json(video_id, "understanding", understanding)
