@@ -4,6 +4,7 @@ import {
   ArrowRight,
   AudioLines,
   Clock,
+  History,
   Layers,
   ListChecks,
   Network,
@@ -16,6 +17,8 @@ import { useEffect, useState } from "react";
 import {
   api,
   humanDuration,
+  mmss,
+  type Preflight,
   type Profile,
   type VideoSummary,
   type VideoType,
@@ -55,6 +58,13 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile>("balanced");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set when the link has been here before. Submitting used to resume from
+   * the cache without saying so, and the run that followed reported 17
+   * seconds for a three-hour video — true of that run, and useless as a
+   * measurement. The choice is the reader's now.
+   */
+  const [found, setFound] = useState<Preflight | null>(null);
   const [recent, setRecent] = useState<VideoSummary[] | null>(null);
 
   // The page is also the way back into finished work, so it should never be a
@@ -71,10 +81,30 @@ export default function Home() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!ready) return;
+    setError(null);
+    // Uploads get a fresh id every time, so only a pasted link can collide.
+    if (mode === "url") {
+      setBusy(true);
+      try {
+        const pre = await api.preflight({ url: url.trim() });
+        if (pre.known) {
+          setFound(pre);
+          setBusy(false);
+          return;
+        }
+      } catch {
+        // Not knowing is not a reason to refuse to start; fall through.
+      }
+    }
+    await start(false);
+  }
+
+  async function start(force: boolean) {
+    setFound(null);
     setBusy(true);
     setError(null);
     try {
-      const common = { video_type: videoType, topic: topic.trim(), profile };
+      const common = { video_type: videoType, topic: topic.trim(), profile, force };
       let job;
       if (mode === "upload" && file) {
         const { upload_id } = await api.upload(file);
@@ -219,6 +249,8 @@ export default function Home() {
 
             {error && <p className="mt-3 text-[0.85rem] text-danger">{error}</p>}
 
+            {found && <AlreadyHere found={found} onPick={start} onCancel={() => setFound(null)} />}
+
             <button className="btn btn-primary mt-4 w-full gap-2" disabled={busy || !ready}>
               {busy ? "Starting…" : "Summarize video"}
               {!busy && <ArrowRight className="h-4 w-4" />}
@@ -318,6 +350,78 @@ export default function Home() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+const STAGE_LABEL: Record<string, string> = {
+  ingest: "Fetch & prepare",
+  analyze: "Transcribe + visuals",
+  fuse: "Align transcript",
+  summarize: "Explanation",
+  index: "Q&A index",
+};
+
+/**
+ * Shown when the pasted link has been processed here before.
+ *
+ * Resuming is usually what someone wants after a failure — the hours of
+ * transcription are already paid for. But it used to happen silently, and
+ * then the run report called a seventeen-second resume "624x faster than
+ * watching". Both choices are offered, and each says plainly what it costs.
+ */
+function AlreadyHere({
+  found,
+  onPick,
+  onCancel,
+}: {
+  found: Preflight;
+  onPick: (force: boolean) => void;
+  onCancel: () => void;
+}) {
+  const stages = Object.entries(found.stages);
+  const done = stages.filter(([, ok]) => ok);
+  return (
+    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/[0.06] p-4">
+      <p className="flex items-center gap-1.5 text-[0.84rem] font-semibold text-warning">
+        <History className="h-4 w-4" />
+        This link has been processed here before
+      </p>
+      <p className="mt-1.5 text-[0.82rem] leading-relaxed text-ink-muted">
+        {found.title ? <span className="text-ink">{found.title}</span> : "This video"}
+        {found.duration_sec ? ` · ${humanDuration(found.duration_sec)}` : ""} ·{" "}
+        {found.stages_done} of {found.stages_total} stages already done
+        {found.last_error ? " · the last run failed" : ""}
+        {found.previous_total_sec != null
+          ? ` · the last run took ${mmss(found.previous_total_sec)}`
+          : ""}
+      </p>
+
+      <ul className="mt-2.5 flex flex-wrap gap-1.5">
+        {stages.map(([name, ok]) => (
+          <li key={name} className={`pill ${ok ? "pill-success" : ""}`}>
+            {STAGE_LABEL[name] || name}
+            {ok ? " ✓" : ""}
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-3.5 flex flex-wrap gap-2">
+        <button type="button" onClick={() => onPick(false)} className="btn btn-primary">
+          Resume — reuse {done.length} finished {done.length === 1 ? "stage" : "stages"}
+        </button>
+        <button type="button" onClick={() => onPick(true)} className="btn">
+          Process fresh — redo everything
+        </button>
+        <button type="button" onClick={onCancel} className="btn">
+          Cancel
+        </button>
+      </div>
+      <p className="mt-2 text-[0.74rem] leading-relaxed text-ink-dim">
+        Resuming is faster but its timings describe only the stages that
+        actually ran. Process fresh when the number itself is the point — a
+        measurement, a demo, or a report.
+      </p>
     </div>
   );
 }

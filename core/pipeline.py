@@ -213,6 +213,13 @@ def process(
     video_id = cache.get_video_id(source_ref)
     cumulative = 0.0
     timings: dict[str, float] = {}
+    # Taken before anything runs. A stage whose artefact is already here did
+    # not produce it, so a resumed run reports 17 seconds for a three-hour
+    # video and the report calls that 624x faster than watching. Knowing which
+    # stages were merely read back is what lets the report say so.
+    reused: dict[str, bool] = (
+        {} if force else {k: v for k, v in cache.completed_stages(video_id).items() if v}
+    )
     pipeline_started = time.perf_counter()
 
     def report(stage: str, progress: float, message: str) -> None:
@@ -325,7 +332,8 @@ def process(
     cache.write_state(
         video_id, "done", 1.0,
         f"Completed in {elapsed / 60:.1f} min.",
-        extra={"timings": timings, "plan": perf.plan_to_dict(plan)},
+        extra={"timings": timings, "plan": perf.plan_to_dict(plan),
+               "reused_stages": sorted(reused)},
     )
     if progress_cb is not None:
         progress_cb("done", 1.0, f"Completed in {elapsed / 60:.1f} min.")
@@ -341,6 +349,9 @@ def process(
         "timings": timings,
         "elapsed_sec": elapsed,
         "highlight_path": highlight_path,
+        # Which stages this run only read back. Empty on a fresh run, which is
+        # the one whose timings describe the work.
+        "reused_stages": sorted(reused),
     }
 
 

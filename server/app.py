@@ -17,6 +17,7 @@ Endpoints
     GET    /api/videos/{video_id}/audio-overview     two-host audio conversation
     GET    /api/videos/{video_id}/quiz               the cached quiz, if any
     POST   /api/videos/{video_id}/quiz               generate one
+    GET    /api/preflight                            what already exists for a link
     GET    /api/videos/{video_id}/problems           problems the video solves
     POST   /api/videos/{video_id}/problems           extract them
     POST   /api/videos/{video_id}/problems/{n}/solutions   other languages
@@ -418,6 +419,45 @@ def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
         raise HTTPException(503, "no language model is configured on the server") from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"quiz generation failed: {exc}") from exc
+
+
+@app.get("/api/preflight")
+def preflight(url: str = "", upload_id: str = "") -> dict:
+    """What already exists for this source, before a job is created.
+
+    Submitting a link that has been here before silently resumed from the
+    cache, and the run that followed reported seventeen seconds for a
+    three-hour video — true of that run, and worthless as a measurement. The
+    client asks this first so the choice between resuming and starting over
+    is the reader's, and so the answer can say which it was.
+    """
+    from core import cache, pipeline
+
+    source_ref = (url or upload_id or "").strip()
+    if not source_ref:
+        raise HTTPException(400, "give a url or an upload_id")
+
+    video_id = cache.get_video_id(source_ref)
+    stages = cache.completed_stages(video_id)
+    meta = pipeline.get_meta(video_id) or {}
+    state = cache.read_json(video_id, "state") or {}
+    previous = (state.get("timings") or {}).get("total")
+
+    return {
+        "video_id": video_id,
+        "source_ref": source_ref,
+        "known": any(stages.values()),
+        "stages": stages,
+        "stages_done": sum(1 for v in stages.values() if v),
+        "stages_total": len(stages),
+        "complete": all(stages.values()),
+        "title": meta.get("title"),
+        "duration_sec": meta.get("duration_sec"),
+        "last_stage": state.get("stage"),
+        "last_error": state.get("error"),
+        "previous_total_sec": previous,
+        "previously_reused": state.get("reused_stages") or [],
+    }
 
 
 # --- problem list: what a coding video actually works through ----------------

@@ -46,6 +46,28 @@ def get_video_id(source_ref: str) -> str:
     return hashlib.sha1(source_ref.encode("utf-8")).hexdigest()[:16]
 
 
+# What each pipeline stage leaves behind. A stage is cache-first, so an
+# artefact that was already on disk before a run started is one that run did
+# not produce — which is the only honest way to read a resumed run's timings.
+STAGE_ARTIFACTS: dict[str, tuple[str, ...]] = {
+    "ingest": ("meta",),
+    "analyze": ("transcript", "scenes"),
+    "fuse": ("fused",),
+    "summarize": ("summary",),
+    "index": ("qa_index/chunks",),
+}
+
+
+def completed_stages(video_id: str) -> dict[str, bool]:
+    """Which stages this video already has results for, in pipeline order."""
+    done: dict[str, bool] = {}
+    for stage, names in STAGE_ARTIFACTS.items():
+        done[stage] = all(
+            (config.CACHE_ROOT / video_id / f"{n}.json").exists() for n in names
+        )
+    return done
+
+
 def get_cache_dir(video_id: str) -> Path:
     """Return ``cache/<video_id>/``, creating it (and the cache root) if absent."""
     cache_dir = config.CACHE_ROOT / video_id

@@ -201,6 +201,25 @@ export interface ProblemDoc {
   families?: Record<string, string[]>;
 }
 
+/** What already exists for a source, before a job is created. */
+export interface Preflight {
+  video_id: string;
+  source_ref: string;
+  /** Any stage has results cached, so submitting would resume rather than run. */
+  known: boolean;
+  stages: Record<string, boolean>;
+  stages_done: number;
+  stages_total: number;
+  complete: boolean;
+  title: string | null;
+  duration_sec: number | null;
+  last_stage: string | null;
+  last_error: string | null;
+  /** What the previous run reported, which may itself have been a resume. */
+  previous_total_sec: number | null;
+  previously_reused: string[];
+}
+
 export interface VideoResult {
   video_id: string;
   meta: Record<string, any>;
@@ -360,6 +379,14 @@ export const api = {
     fetch(`/api/videos/${videoId}/quiz?count=${count}&force=${force}`, {
       method: "POST",
     }).then((r) => j<QuizDoc>(r)),
+
+  preflight: (params: { url?: string; upload_id?: string }) =>
+    fetch(
+      "/api/preflight?" +
+        new URLSearchParams(
+          params.url ? { url: params.url } : { upload_id: params.upload_id! },
+        ),
+    ).then((r) => j<Preflight>(r)),
 
   problems: (videoId: string) =>
     fetch(`/api/videos/${videoId}/problems`).then((r) => j<ProblemDoc>(r)),
