@@ -72,18 +72,30 @@ def _understand_or_summarize(
             ) / 60.0
             if duration_min > config.LOCAL_FALLBACK_MAX_VIDEO_MIN:
                 quota = isinstance(exc, understand.llm.LLMQuotaExceeded)
+                # Name the real failure. Saying "could not be reached" when
+                # the model answered every time, and "once the quota resets"
+                # when the quota was never the problem, sent a day of
+                # debugging at the wrong provider: the model had in fact
+                # replied to all 8 windows and spent its whole output budget
+                # thinking. Whatever the LLM said is the only clue anyone has
+                # here, so it is carried through to the screen.
                 raise understand.llm.LLMError(
                     (
                         "The language model's quota is exhausted, "
                         if quota
-                        else "The language model could not be reached, "
+                        else "The explanation could not be generated, "
                     )
                     + f"and this video is {duration_min / 60:.1f} hours long. "
                     "The offline summariser would take hours on it and could "
                     "not produce the explanation the quiz, flashcards and "
                     "audio overview are built from, so the run stopped here "
-                    "instead. Everything already processed is cached: "
-                    "re-running once the quota resets redoes only this step."
+                    "instead. Everything already processed is cached, so "
+                    "re-running redoes only this step. "
+                    + (
+                        "The quota resets on the provider's own schedule."
+                        if quota
+                        else f"The model reported: {exc}"
+                    )
                 ) from exc
 
             logger.warning(
