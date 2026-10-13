@@ -380,20 +380,74 @@ class LLMClient:
 _client: Optional[LLMClient] = None
 
 
+class ChainedClient:
+    """Two providers, the second used only once the first is spent.
+
+    Both free tiers are generous enough for a day of work and neither is
+    enough on its own: an eleven-hour video is seventeen calls, and the
+    accounts are metered per day. Keeping one configured as a spare is what
+    turns "come back tomorrow" into "this one takes a little longer".
+
+    Only a spent quota hands over. A model that returned bad JSON, or an
+    endpoint having a bad minute, is the first provider's own business and it
+    retries that itself; switching on those would quietly spend the spare on
+    problems that were about to resolve.
+    """
+
+    def __init__(self, primary, spare) -> None:
+        self._primary = primary
+        self._spare = spare
+        self._primary_spent = False
+
+    @property
+    def available(self) -> bool:
+        return self._primary.available or self._spare.available
+
+    @property
+    def model(self) -> str:
+        return self._current.model
+
+    @property
+    def _current(self):
+        return self._spare if self._primary_spent else self._primary
+
+    def generate_json(self, *args, **kwargs) -> LLMResult:
+        if not self._primary_spent:
+            try:
+                return self._primary.generate_json(*args, **kwargs)
+            except LLMQuotaExceeded as exc:
+                if not self._spare.available:
+                    raise
+                logger.warning(
+                    "%s is out of quota (%s); the rest of this run uses %s",
+                    self._primary.model, str(exc)[:160], self._spare.model,
+                )
+                self._primary_spent = True
+        return self._spare.generate_json(*args, **kwargs)
+
+
 def get_client():
-    """Process-wide singleton for whichever provider is configured.
+    """Process-wide singleton for whichever providers are configured.
 
     An explicitly configured OpenAI-compatible endpoint wins over Gemini,
-    because setting one is a deliberate act — usually because the Gemini
-    quota ran out and the alternative is the offline summariser.
+    because setting one is a deliberate act. When both are configured the
+    other becomes the spare rather than being ignored, since running out of
+    one of them part-way through a long video is the normal case, not an
+    exceptional one.
     """
     global _client
     if _client is None:
-        candidate = OpenAICompatibleClient()
-        _client = candidate if candidate.available else LLMClient()
-        logger.info("LLM provider: %s (%s)",
-                    type(_client).__name__,
-                    _client.model if _client.available else "unconfigured")
+        openai_compatible = OpenAICompatibleClient()
+        gemini = LLMClient()
+        if openai_compatible.available and gemini.available:
+            _client = ChainedClient(openai_compatible, gemini)
+            logger.info("LLM provider: %s, falling back to %s when its quota is spent",
+                        openai_compatible.model, gemini.model)
+        else:
+            _client = openai_compatible if openai_compatible.available else gemini
+            logger.info("LLM provider: %s (%s)",
+                        type(_client).__name__,
+                        _client.model if _client.available else "unconfigured")
     return _client
 
 

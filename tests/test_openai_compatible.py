@@ -82,15 +82,19 @@ def test_no_choices_is_an_error(client):
         client._parse({"choices": []}, 100, 1.0, False)
 
 
-def test_a_configured_endpoint_wins_over_gemini(monkeypatch):
-    """Setting one is deliberate — usually because the Gemini quota ran out."""
+def test_a_configured_endpoint_goes_first_and_gemini_becomes_the_spare(monkeypatch):
+    """Setting one is deliberate — usually because the Gemini quota ran out.
+    Gemini is not thrown away for that: it is the spare for when this one
+    runs out in turn, which is the whole point of having both."""
     monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://api.example.com/v1")
     monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
     monkeypatch.setattr(llm.config, "LLM_MODEL", "m")
     monkeypatch.setattr(llm.config, "GEMINI_API_KEY", "also-set")
     llm.reset_client()
     try:
-        assert isinstance(llm.get_client(), llm.OpenAICompatibleClient)
+        client = llm.get_client()
+        assert isinstance(client, llm.ChainedClient)
+        assert client.model == "m", "the configured endpoint answers first"
     finally:
         llm.reset_client()
 
@@ -566,3 +570,71 @@ def test_one_model_still_reports_its_own_error_plainly(client, monkeypatch):
     with pytest.raises(llm.LLMError) as exc:
         client.generate_json("sys", "prompt")
     assert "every configured model" not in str(exc.value)
+
+
+# --- two providers, one spare --------------------------------------------
+# Both free tiers are metered per day and neither is enough on its own: an
+# 11-hour video is 17 calls. Running out part-way is the normal case.
+
+class FakeProvider:
+    def __init__(self, name, *, available=True, raises=None):
+        self.model = name
+        self.available = available
+        self._raises = raises
+        self.calls = 0
+
+    def generate_json(self, *args, **kwargs):
+        self.calls += 1
+        if self._raises:
+            raise self._raises
+        return llm.LLMResult(data={"from": self.model}, model=self.model,
+                             finish_reason="stop", prompt_chars=1,
+                             elapsed_sec=0.1, truncated_input=False)
+
+
+def test_the_spare_is_untouched_while_the_first_works():
+    primary, spare = FakeProvider("primary"), FakeProvider("spare")
+    chained = llm.ChainedClient(primary, spare)
+    assert chained.generate_json("s", "p").data == {"from": "primary"}
+    assert spare.calls == 0
+
+
+def test_a_spent_quota_hands_over_for_the_rest_of_the_run():
+    primary = FakeProvider("primary", raises=llm.LLMQuotaExceeded("spent until midnight"))
+    spare = FakeProvider("spare")
+    chained = llm.ChainedClient(primary, spare)
+
+    assert chained.generate_json("s", "p").data == {"from": "spare"}
+    assert chained.generate_json("s", "p").data == {"from": "spare"}
+    assert primary.calls == 1, "it must not keep asking a provider it knows is spent"
+    assert chained.model == "spare"
+
+
+def test_an_ordinary_failure_does_not_spend_the_spare():
+    """A bad reply or a bad minute is the first provider's own business, and
+    it retries that itself. Switching would quietly burn the spare on
+    problems that were about to resolve."""
+    primary = FakeProvider("primary", raises=llm.LLMError("returned no choices"))
+    spare = FakeProvider("spare")
+    with pytest.raises(llm.LLMError):
+        llm.ChainedClient(primary, spare).generate_json("s", "p")
+    assert spare.calls == 0
+
+
+def test_a_spent_quota_is_reported_when_there_is_no_spare():
+    primary = FakeProvider("primary", raises=llm.LLMQuotaExceeded("spent"))
+    spare = FakeProvider("spare", available=False)
+    with pytest.raises(llm.LLMQuotaExceeded):
+        llm.ChainedClient(primary, spare).generate_json("s", "p")
+
+
+def test_both_configured_means_chained(monkeypatch):
+    monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(llm.config, "LLM_MODEL", "some/model:free")
+    monkeypatch.setattr(llm.config, "GEMINI_API_KEY", "gemini-key")
+    llm.reset_client()
+    try:
+        assert isinstance(llm.get_client(), llm.ChainedClient)
+    finally:
+        llm.reset_client()
