@@ -17,6 +17,9 @@ Endpoints
     GET    /api/videos/{video_id}/audio-overview     two-host audio conversation
     GET    /api/videos/{video_id}/quiz               the cached quiz, if any
     POST   /api/videos/{video_id}/quiz               generate one
+    GET    /api/videos/{video_id}/problems           problems the video solves
+    POST   /api/videos/{video_id}/problems           extract them
+    POST   /api/videos/{video_id}/problems/{n}/solutions   other languages
     GET    /api/health
 
 Auth is not wired here — a real deployment puts a JWT / Clerk middleware in
@@ -415,6 +418,83 @@ def make_quiz(video_id: str, count: int = 10, force: bool = False) -> dict:
         raise HTTPException(503, "no language model is configured on the server") from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"quiz generation failed: {exc}") from exc
+
+
+# --- problem list: what a coding video actually works through ----------------
+
+
+@app.get("/api/videos/{video_id}/problems")
+def get_problems(video_id: str) -> dict:
+    """The cached problem list, or an empty one if it has not been built.
+
+    As with the quiz, "not extracted yet" is the normal state rather than an
+    error, and the client offers the button instead of showing a failure.
+    """
+    from core import pipeline, problems
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    cached = problems.get(video_id)
+    if cached:
+        return cached
+    return {
+        "problems": [],
+        "available": problems.is_available(),
+        "families": problems.FAMILIES,
+    }
+
+
+@app.post("/api/videos/{video_id}/problems")
+def make_problems(video_id: str, force: bool = False) -> dict:
+    """Read the whole video and write down every problem it solves.
+
+    Unlike the quiz this is several calls — one per part of the video — so a
+    three-hour practice session takes a few minutes rather than seconds. It
+    still runs inline: the reader asked for it and is waiting, and the result
+    is cached, so it is paid for once.
+    """
+    from core import llm, pipeline, problems
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    try:
+        return problems.generate(video_id, force=force)
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except llm.LLMUnavailable as exc:
+        raise HTTPException(503, "no language model is configured on the server") from exc
+    except llm.LLMError as exc:
+        raise HTTPException(502, f"could not extract the problems: {exc}") from exc
+
+
+@app.post("/api/videos/{video_id}/problems/{index}/solutions")
+def translate_problem(
+    video_id: str,
+    index: int,
+    language: str = "",
+    force: bool = False,
+) -> dict:
+    """Fill in one problem's solution in the other languages of its family.
+
+    With no ``language`` every language the video did not use is filled in at
+    once, which is one request rather than one per dialect — the difference
+    between a free tier lasting a day and lasting an hour.
+    """
+    from core import llm, pipeline, problems
+
+    if pipeline.get_meta(video_id) is None:
+        raise HTTPException(404, "video not found")
+    wanted = [language] if language else None
+    try:
+        return problems.translate(video_id, index, languages=wanted, force=force)
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except IndexError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except llm.LLMUnavailable as exc:
+        raise HTTPException(503, "no language model is configured on the server") from exc
+    except llm.LLMError as exc:
+        raise HTTPException(502, f"translation failed: {exc}") from exc
 
 
 # --- chat threads: conversations that outlive the page -----------------------

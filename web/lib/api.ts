@@ -169,6 +169,38 @@ export interface AskAnswer {
   off_topic: boolean;
 }
 
+/** One problem a coding video works through, with its solution per language. */
+export interface Problem {
+  n: number;
+  title: string;
+  statement: string;
+  approach: string;
+  /** The language the video itself used. */
+  language: string;
+  /** Canonical language name -> code. Filled in lazily by translating. */
+  solutions: Record<string, string>;
+  /** Where a target needed a real change rather than a rename. */
+  notes?: Record<string, string>;
+  start_sec: number;
+  difficulty: "easy" | "medium" | "hard";
+  topics: string[];
+}
+
+export interface ProblemDoc {
+  problems: Problem[];
+  /** "sql" or "programming" — which languages it is meaningful to offer. */
+  family?: string;
+  primary_language?: string;
+  targets?: string[];
+  model?: string;
+  generated_in_sec?: number;
+  parts?: number;
+  parts_failed?: number;
+  /** Only on an empty document: whether extraction is possible at all. */
+  available?: boolean;
+  families?: Record<string, string[]>;
+}
+
 export interface VideoResult {
   video_id: string;
   meta: Record<string, any>;
@@ -328,6 +360,26 @@ export const api = {
     fetch(`/api/videos/${videoId}/quiz?count=${count}&force=${force}`, {
       method: "POST",
     }).then((r) => j<QuizDoc>(r)),
+
+  problems: (videoId: string) =>
+    fetch(`/api/videos/${videoId}/problems`).then((r) => j<ProblemDoc>(r)),
+
+  /** Reads the whole video; several model calls, so this takes minutes. */
+  makeProblems: (videoId: string, force = false) =>
+    fetch(`/api/videos/${videoId}/problems?force=${force}`, { method: "POST" }).then(
+      (r) => j<ProblemDoc>(r),
+    ),
+
+  /**
+   * Fill in one problem's other languages. Omitting `language` fills every
+   * missing one in a single request, which is what keeps a free tier usable.
+   */
+  translateProblem: (videoId: string, n: number, language = "") =>
+    fetch(
+      `/api/videos/${videoId}/problems/${n}/solutions` +
+        (language ? `?language=${encodeURIComponent(language)}` : ""),
+      { method: "POST" },
+    ).then((r) => j<Problem>(r)),
 
   ask: (videoId: string, question: string, history: AskTurn[] = []) =>
     fetch(`/api/videos/${videoId}/ask`, {

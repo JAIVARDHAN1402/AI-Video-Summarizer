@@ -21,6 +21,7 @@ import { Chat } from "@/components/Chat";
 import { DataTable, Empty, Flashcards, StudyGuide } from "@/components/StudioViews";
 import { MindMap, SlideDeck } from "@/components/Visuals";
 import { Quiz } from "@/components/Quiz";
+import { Problems } from "@/components/Problems";
 import { Notes } from "@/components/Notes";
 import { Infographic } from "@/components/Infographic";
 import { AudioOverview } from "@/components/AudioOverview";
@@ -44,6 +45,7 @@ const STUDIO_TITLE: Record<StudioKind, string> = {
   "slide-deck": "Slide Deck",
   report: "Run Report",
   quiz: "Quiz",
+  problems: "Practice Set",
   audio: "Audio Overview",
   infographic: "Infographic",
 };
@@ -364,6 +366,15 @@ function StudioCanvas({
       );
     case "audio":
       return <AudioOverview videoId={data.video_id} hasUnderstanding={!!u} />;
+    case "problems":
+      return (
+        <Problems
+          videoId={data.video_id}
+          hasUnderstanding={!!u}
+          sourceRef={sourceRef}
+          onSeek={onSeek}
+        />
+      );
     case "quiz":
       return (
         <Quiz

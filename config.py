@@ -389,6 +389,13 @@ UNDERSTANDING_WINDOW_MIN = float(os.getenv("VS_UNDERSTANDING_WINDOW_MIN", "25"))
 # Past the cap the windows simply widen.
 UNDERSTANDING_MAX_WINDOWS = int(os.getenv("VS_UNDERSTANDING_MAX_WINDOWS", "16"))
 
+# --- Problem list (core/problems.py) -------------------------------------
+# Every window is a request, and the reply carries whole solutions, so this
+# bounds what one video can spend. A three-hour practice video with seventy
+# questions fits comfortably; past the cap the windows are spread evenly so
+# the list still covers the end of the video rather than stopping halfway.
+PROBLEMS_MAX_WINDOWS = int(os.getenv("VS_PROBLEMS_MAX_WINDOWS", "14"))
+
 # Seconds to wait between window calls. A long video is many calls in quick
 # succession, which is exactly what trips a per-minute quota — a 12-hour video
 # is 29 of them. The pause costs far less than the retries it avoids.

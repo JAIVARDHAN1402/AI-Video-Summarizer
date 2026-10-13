@@ -4,6 +4,7 @@ import {
   AudioLines,
   BookOpen,
   BrainCircuit,
+  Code2,
   FileText,
   Image as ImageIcon,
   Layers,
@@ -21,6 +22,7 @@ export type StudioKind =
   | "data-table"
   | "slide-deck"
   | "quiz"
+  | "problems"
   | "audio"
   | "infographic"
   | "report";
@@ -94,6 +96,14 @@ const TILES: Tile[] = [
     ready: true,
   },
   {
+    kind: "problems",
+    label: "Practice Set",
+    icon: <Code2 className="h-[15px] w-[15px]" />,
+    tone: "bg-success/[0.12] text-success",
+    from: "every problem solved, in any dialect",
+    ready: true,
+  },
+  {
     kind: "audio",
     label: "Audio Overview",
     icon: <AudioLines className="h-[15px] w-[15px]" />,
@@ -137,7 +147,8 @@ export function StudioPanel({
       <div className="flex flex-col gap-1.5">
         {TILES.map((t) => {
           const n = counts[t.kind];
-          const empty = t.ready && !["quiz", "audio"].includes(t.kind) && n === 0;
+          const empty =
+            t.ready && !["quiz", "audio", "problems"].includes(t.kind) && n === 0;
           return (
             <button
               key={t.kind}
