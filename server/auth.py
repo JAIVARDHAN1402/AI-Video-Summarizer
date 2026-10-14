@@ -19,7 +19,10 @@ from server import config
 
 logger = logging.getLogger("server.auth")
 
-PUBLIC_PATHS = ("/api/health",)
+# Health, and the ways in. A sign-in route behind the sign-in would be a
+# door that needs its own key.
+PUBLIC_PATHS = ("/api/health", "/api/auth/methods", "/api/auth/otp/",
+                "/api/auth/google/", "/api/billing/plan")
 
 
 def _principal_from_jwt(token: str) -> dict | None:

@@ -26,6 +26,12 @@ Open `http://localhost:8000/docs` for the interactive API.
 | `GET` | `/api/videos/{video_id}/keyframes/{name}` | A keyframe image (never requires auth) |
 | `GET` | `/api/videos/{video_id}/highlight` | M7 highlight reel (mp4), built on demand; 404 if no trained model |
 | `POST` | `/api/videos/{video_id}/ask` | Grounded Q&A — `{question}` |
+| `GET` | `/api/auth/methods` | Enabled sign-in and payment methods |
+| `POST` | `/api/auth/otp/request` | Send an email or phone one-time code |
+| `POST` | `/api/auth/otp/verify` | Verify a code and receive a session token |
+| `GET` / `POST` | `/api/auth/google/{url,callback}` | Start and complete Google sign-in |
+| `GET` | `/api/auth/me` | Signed-in account and remaining allowance |
+| `GET` / `POST` | `/api/billing/{plan,order,confirm}` | Premium plan and Razorpay checkout flow |
 | `GET` | `/api/scheduler/{classes,sla,preview}` | Worker classes, SLA evidence, routing preview |
 | `GET` | `/api/health` | Status, queue backend, auth/storage mode, hardware profile |
 
@@ -57,14 +63,30 @@ they're open.
 | `VS_HIGHLIGHT_MODEL` | auto | M7 checkpoint path; `off` to disable. Default `ml/checkpoints/importance.pt` if present |
 | `VS_HIGHLIGHT_AUTO` / `VS_HIGHLIGHT_MAX_SEC` | `1` / `90` | Build the reel at end of run; reel length cap |
 
-## Auth
+## Accounts, auth, and limits
 
-Off by default — local dev and the bundled frontend need no setup. Set
-`VS_API_KEYS` and/or `VS_JWT_SECRET` to require `Authorization: Bearer <token>`
-on every `/api` route except `/api/health` and keyframe images (referenced by
-bare `<img>` tags that can't send headers). API keys are static strings; JWTs
-are verified with PyJWT against `VS_JWT_SECRET`. A JWT deployment fronts this
-with Clerk/Auth0/etc. and passes their token straight through.
+Auth is off by default, so local development remains open. Set a long random
+`VS_JWT_SECRET` to enable the built-in account flow. The bundled web app then
+shows a sign-in menu, stores its signed JWT in browser local storage, and adds
+it to every API call. Readers can sign in with an emailed OTP, an SMS OTP when
+configured, or Google OAuth. Static `VS_API_KEYS` are still supported for
+scripts and service-to-service use.
+
+Set `VS_DEV_OTP_ECHO=0` outside a private local demo. With it on (the local
+default), a code is written to the API log when SMTP/SMS is unavailable; that
+must never be exposed on a public server. Production email needs
+`VS_SMTP_HOST`, `VS_SMTP_USER`, `VS_SMTP_PASSWORD`, and `VS_SMTP_FROM`.
+
+The free tier permits videos up to four hours and 40 estimated model calls per
+UTC day by default. Premium defaults to 15 hours and 400 calls; all limits are
+environment variables. Processing is measured before queueing and rejected
+with a clear `402` when it would exceed the account's plan.
+
+Set `VS_GOOGLE_CLIENT_ID`, `VS_GOOGLE_CLIENT_SECRET`, and
+`VS_GOOGLE_REDIRECT_URI=https://<frontend>/auth/google` to turn on Google.
+Set `VS_RAZORPAY_KEY_ID` and `VS_RAZORPAY_KEY_SECRET` to enable the browser's
+Razorpay Checkout button; keep `VS_RAZORPAY_MODE=test` until the business and
+refund requirements for live payments are ready.
 
 ## Uploads & storage
 
@@ -140,9 +162,10 @@ the adaptive routing against `baseline_sla_met_rate` for a static
 `total:per_min` cost. The first jobs route on seed estimates; once each class
 has real data the routing stops sending jobs to the class that would overrun.
 
-## Not yet wired
+## Deployment notes
 
-- Auth — a real deployment puts JWT / Clerk middleware in front of `/api/*`.
-- Uploads — `POST /api/jobs` currently takes a URL only.
-- Object storage — artifacts live under `cache/<video_id>/`; `server/storage.py`
-  is the seam for S3/R2.
+Uploads, S3/R2 artifact mirroring, browser account sessions, quotas, and the
+Razorpay payment confirmation flow are wired. Before a public launch, supply
+real sender credentials, disable development OTP echoing, set the precise
+Google redirect URI, and use a persistent database/storage backend rather than
+the local SQLite and filesystem defaults.

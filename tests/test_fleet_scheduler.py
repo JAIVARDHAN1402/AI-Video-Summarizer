@@ -8,16 +8,29 @@ import os
 import tempfile
 import time
 
+import pytest
+
 _TMP_DB = os.path.join(tempfile.mkdtemp(), "fleet_test.db")
 os.environ["VS_DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
 os.environ["VS_LOCAL_FLEET"] = (
     '[{"class":"cpu-fast","speed":1.0},{"class":"cpu-slow","speed":0.1}]'
 )
 
-from server import jobs, scheduler  # noqa: E402
+from server import config, jobs, scheduler  # noqa: E402
 from server.db import init_db, session  # noqa: E402
 
 init_db()
+
+# The environment above only takes effect if this module is imported before
+# anything else imports server.config, which made these tests pass alone and
+# fail in a suite that happened to import it first. The fleet is set here
+# instead, so the order no longer decides the result.
+_FLEET = [{"class": "cpu-fast", "speed": 1.0}, {"class": "cpu-slow", "speed": 0.1}]
+
+
+@pytest.fixture(autouse=True)
+def _two_class_fleet(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_FLEET", _FLEET)
 
 
 def test_routes_explore_then_avoid_the_slow_class():

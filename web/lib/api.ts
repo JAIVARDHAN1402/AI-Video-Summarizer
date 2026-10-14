@@ -5,6 +5,99 @@ export type VideoType =
   | "lecture" | "coding" | "meeting" | "interview" | "talk" | "news" | "documentary" | "other";
 export type Profile = "fast" | "balanced" | "accurate";
 
+export interface AuthMethods {
+  auth_required: boolean;
+  google: boolean;
+  email: boolean;
+  phone: boolean;
+  /** True only in local development: the code is written to the API log. */
+  dev_echo: boolean;
+  payments: boolean;
+}
+
+export interface Account {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  name: string | null;
+  picture: string | null;
+  tier: "free" | "premium";
+  tier_expires_at: string | null;
+  created_at: string | null;
+}
+
+export interface Quota {
+  tier: "free" | "premium";
+  max_video_hours: number;
+  daily_calls: number;
+  used_today: number;
+  remaining: number;
+  resets_at: string;
+}
+
+export interface AuthSession {
+  token: string;
+  user: Account;
+  quota: Quota;
+}
+
+export interface BillingPlan {
+  configured: boolean;
+  mode: string;
+  key_id: string;
+  amount_paise: number;
+  currency: string;
+  days: number;
+  free: Pick<Quota, "max_video_hours" | "daily_calls">;
+  premium: Pick<Quota, "max_video_hours" | "daily_calls">;
+}
+
+const TOKEN_KEY = "vs-session-token";
+
+/** The browser owns the short-lived session token; SSR never needs it. */
+export function sessionToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionToken(token: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event("vs-auth-change"));
+  } catch {
+    // Private browsing with storage disabled: the request still works until
+    // the tab closes, but it cannot be remembered after a refresh.
+  }
+}
+
+export function hasSessionToken(): boolean {
+  return Boolean(sessionToken());
+}
+
+/**
+ * The one path for browser requests. Centralising it prevents a new feature
+ * from accidentally becoming the one unauthenticated API call after JWT is
+ * enabled. `fetch` below is intentionally shadowed for the typed client.
+ */
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = sessionToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await globalThis.fetch(input, { ...init, headers });
+  if (response.status === 401 && token) {
+    setSessionToken(null);
+  }
+  return response;
+}
+
+const fetch = apiFetch;
+
 export interface JobView {
   id: string;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
@@ -240,6 +333,48 @@ async function j<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  authMethods: () => fetch("/api/auth/methods").then((r) => j<AuthMethods>(r)),
+
+  requestOtp: (channel: "email" | "phone", destination: string) =>
+    fetch("/api/auth/otp/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, destination }),
+    }).then((r) => j<{ sent: boolean; channel: string; destination: string; expires_in_sec: number }>(r)),
+
+  verifyOtp: (channel: "email" | "phone", destination: string, code: string) =>
+    fetch("/api/auth/otp/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, destination, code }),
+    }).then((r) => j<AuthSession>(r)),
+
+  googleUrl: (state: string) =>
+    fetch(`/api/auth/google/url?state=${encodeURIComponent(state)}`).then((r) => j<{ url: string }>(r)),
+
+  googleCallback: (code: string) =>
+    fetch("/api/auth/google/callback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }).then((r) => j<AuthSession>(r)),
+
+  me: () => fetch("/api/auth/me").then((r) => j<{ signed_in: boolean; user: Account | null; quota: Quota }>(r)),
+
+  billingPlan: () => fetch("/api/billing/plan").then((r) => j<BillingPlan>(r)),
+
+  billingOrder: () =>
+    fetch("/api/billing/order", { method: "POST" }).then((r) =>
+      j<{ order_id: string; amount_paise: number; currency: string; key_id: string; mode: string }>(r),
+    ),
+
+  billingConfirm: (orderId: string, paymentId: string, signature: string) =>
+    fetch("/api/billing/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order_id: orderId, payment_id: paymentId, signature }),
+    }).then((r) => j<{ user: Account; quota: Quota }>(r)),
+
   createJob: (body: {
     url?: string; upload_id?: string;
     video_type: VideoType; topic: string; profile: Profile; force?: boolean;

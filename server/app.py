@@ -18,6 +18,11 @@ Endpoints
     GET    /api/videos/{video_id}/quiz               the cached quiz, if any
     POST   /api/videos/{video_id}/quiz               generate one
     GET    /api/preflight                            what already exists for a link
+    GET    /api/auth/methods                         which ways in this server offers
+    POST   /api/auth/otp/request | /verify           sign in with a one-time code
+    GET    /api/auth/google/url  | POST /callback    sign in with Google
+    GET    /api/auth/me                              the account and its allowance
+    GET    /api/billing/plan | POST /order,/confirm  upgrading to premium
     GET    /api/videos/{video_id}/problems           problems the video solves
     POST   /api/videos/{video_id}/problems           extract them
     POST   /api/videos/{video_id}/problems/{n}/solutions   other languages
@@ -42,7 +47,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
-from server import auth, config, jobs, schemas, scheduler, storage
+from server import (auth, billing, config, db, identity, jobs, quota,
+                    schemas, scheduler, storage)
 from server.db import JobStatus, init_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
@@ -98,7 +104,8 @@ async def upload_file(file: UploadFile = File(...)) -> schemas.UploadResponse:
 
 
 @app.post("/api/jobs", response_model=schemas.JobRef, status_code=202)
-def create_job(req: schemas.CreateJobRequest) -> schemas.JobRef:
+def create_job(req: schemas.CreateJobRequest,
+               principal: dict = Depends(auth.require_auth)) -> schemas.JobRef:
     if req.upload_id:
         try:
             source_ref = str(storage.get_storage().upload_path(req.upload_id.strip()))
@@ -108,11 +115,36 @@ def create_job(req: schemas.CreateJobRequest) -> schemas.JobRef:
     else:
         source_ref, is_upload = req.url.strip(), False
 
-    job = jobs.create_job(
-        source_ref=source_ref, is_upload=is_upload, video_type=req.video_type,
-        topic=req.topic.strip(), profile=req.profile, force=req.force,
-        sla_sec=req.sla_sec,
-    )
+    from core import pipeline
+
+    # What this costs is decided before anything is downloaded. The duration
+    # comes from the source's own metadata, so a video too long for the
+    # reader's plan is refused in a second rather than after an hour of work.
+    session = db.session()
+    try:
+        user = identity.user_from_principal(session, principal)
+        cost = 0
+        try:
+            preview = pipeline.preview_source(source_ref, is_upload)
+            cost = quota.check(session, user, float(preview.get("duration_sec") or 0.0))
+        except quota.QuotaError as exc:
+            raise HTTPException(402, exc.to_dict()) from exc
+        except HTTPException:
+            raise
+        except Exception:
+            # A source we cannot measure yet is not a reason to refuse; the
+            # run itself will fail with something the reader can act on.
+            logger.warning("could not measure %s before queueing", source_ref, exc_info=True)
+
+        job = jobs.create_job(
+            source_ref=source_ref, is_upload=is_upload, video_type=req.video_type,
+            topic=req.topic.strip(), profile=req.profile, force=req.force,
+            sla_sec=req.sla_sec,
+        )
+        quota.charge(session, user, cost, job_id=job.id, kind="process")
+    finally:
+        session.close()
+
     jobs.enqueue(job.id, job.routed_worker_class)
     return schemas.JobRef(id=job.id, status=job.status.value)
 
@@ -458,6 +490,135 @@ def preflight(url: str = "", upload_id: str = "") -> dict:
         "previous_total_sec": previous,
         "previously_reused": state.get("reused_stages") or [],
     }
+
+
+# --- accounts ----------------------------------------------------------------
+
+
+def _session_user(principal: dict):
+    """The signed-in account for a request, or None. Caller closes the session."""
+    session = db.session()
+    return session, identity.user_from_principal(session, principal)
+
+
+@app.get("/api/auth/methods")
+def auth_methods() -> dict:
+    """Which ways in this deployment actually offers.
+
+    The client asks rather than assuming, so a server without SMS credit
+    simply does not show a phone tab instead of showing one that fails.
+    """
+    sms_ready = (
+        (config.SMS_PROVIDER == "twilio" and bool(
+            config.SMS_API_KEY and config.SMS_TWILIO_SID and config.SMS_TWILIO_FROM
+        ))
+        or (config.SMS_PROVIDER == "msg91" and bool(
+            config.SMS_API_KEY and config.SMS_SENDER
+        ))
+    )
+    return {
+        "auth_required": config.AUTH_ENABLED,
+        # A code can be delivered without a JWT secret, but it cannot produce
+        # a session the API will accept. Do not advertise a dead sign-in path
+        # to a deployment configured only with static API keys.
+        "google": bool(config.JWT_SECRET) and identity.google_configured(),
+        "email": bool(config.JWT_SECRET) and bool(config.SMTP_HOST or config.DEV_OTP_ECHO),
+        "phone": bool(config.JWT_SECRET) and (sms_ready or config.DEV_OTP_ECHO),
+        "dev_echo": config.DEV_OTP_ECHO,
+        "payments": billing.configured(),
+    }
+
+
+@app.post("/api/auth/otp/request")
+def request_otp(body: schemas.OtpRequest) -> dict:
+    session = db.session()
+    try:
+        return identity.request_code(session, body.channel, body.destination)
+    except identity.IdentityError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.post("/api/auth/otp/verify")
+def verify_otp(body: schemas.OtpVerify) -> dict:
+    session = db.session()
+    try:
+        user = identity.verify_code(session, body.channel, body.destination, body.code)
+        return {"token": identity.issue_token(user), "user": user.to_dict(),
+                "quota": quota.summary(session, user)}
+    except identity.IdentityError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.get("/api/auth/google/url")
+def google_url(state: str = "") -> dict:
+    try:
+        return {"url": identity.google_auth_url(state)}
+    except identity.IdentityError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/auth/google/callback")
+def google_callback(body: schemas.GoogleCallback) -> dict:
+    session = db.session()
+    try:
+        user = identity.google_sign_in(session, body.code)
+        return {"token": identity.issue_token(user), "user": user.to_dict(),
+                "quota": quota.summary(session, user)}
+    except identity.IdentityError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.get("/api/auth/me")
+def whoami(principal: dict = Depends(auth.require_auth)) -> dict:
+    session, user = _session_user(principal)
+    try:
+        return {
+            "signed_in": user is not None,
+            "user": user.to_dict() if user else None,
+            "quota": quota.summary(session, user),
+        }
+    finally:
+        session.close()
+
+
+@app.get("/api/billing/plan")
+def billing_plan() -> dict:
+    return billing.plan()
+
+
+@app.post("/api/billing/order")
+def billing_order(principal: dict = Depends(auth.require_auth)) -> dict:
+    session, user = _session_user(principal)
+    try:
+        if user is None:
+            raise HTTPException(401, "sign in before upgrading")
+        return billing.create_order(session, user)
+    except billing.BillingError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    finally:
+        session.close()
+
+
+@app.post("/api/billing/confirm")
+def billing_confirm(body: schemas.PaymentConfirm,
+                    principal: dict = Depends(auth.require_auth)) -> dict:
+    session, user = _session_user(principal)
+    try:
+        if user is None:
+            raise HTTPException(401, "sign in before upgrading")
+        user = billing.confirm(session, user, body.order_id, body.payment_id,
+                               body.signature)
+        return {"user": user.to_dict(), "quota": quota.summary(session, user)}
+    except billing.BillingError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        session.close()
 
 
 # --- problem list: what a coding video actually works through ----------------

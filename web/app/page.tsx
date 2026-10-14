@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   api,
+  hasSessionToken,
   humanDuration,
   mmss,
   type Preflight,
@@ -66,6 +67,7 @@ export default function Home() {
    */
   const [found, setFound] = useState<Preflight | null>(null);
   const [recent, setRecent] = useState<VideoSummary[] | null>(null);
+  const [loginRequired, setLoginRequired] = useState(false);
 
   // The page is also the way back into finished work, so it should never be a
   // dead end for someone who has processed something before.
@@ -78,10 +80,25 @@ export default function Home() {
 
   const ready = mode === "url" ? !!url.trim() : !!file;
 
+  /** Stop before preflight, upload, or a job is created — never after work starts. */
+  async function requiresSignIn(): Promise<boolean> {
+    try {
+      const methods = await api.authMethods();
+      if (methods.auth_required && !hasSessionToken()) {
+        setLoginRequired(true);
+        return true;
+      }
+    } catch {
+      // The eventual request retains its normal, useful network error.
+    }
+    return false;
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!ready) return;
     setError(null);
+    if (await requiresSignIn()) return;
     // Uploads get a fresh id every time, so only a pasted link can collide.
     if (mode === "url") {
       setBusy(true);
@@ -100,6 +117,7 @@ export default function Home() {
   }
 
   async function start(force: boolean) {
+    if (await requiresSignIn()) return;
     setFound(null);
     setBusy(true);
     setError(null);
@@ -350,6 +368,29 @@ export default function Home() {
           </div>
         </div>
       </div>
+      {loginRequired && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-ink/40 px-4" role="dialog" aria-modal="true" aria-labelledby="login-gate-title">
+          <section className="card w-full max-w-[420px] p-6 shadow-card-hover">
+            <h2 id="login-gate-title" className="m-0 text-xl font-bold text-ink">Sign in to process a video</h2>
+            <p className="mt-3 text-[0.9rem] leading-relaxed text-ink-muted">
+              Your account keeps processing limits fair and lets us track your daily allowance. Sign in first, then submit your link or upload.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  setLoginRequired(false);
+                  window.dispatchEvent(new Event("vs-open-auth"));
+                }}
+              >
+                Sign in now
+              </button>
+              <button type="button" className="btn" onClick={() => setLoginRequired(false)}>Not now</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

@@ -248,6 +248,121 @@ class SlaObservation(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class Tier(str, enum.Enum):
+    FREE = "free"
+    PREMIUM = "premium"
+
+
+class User(Base):
+    """One person, however they signed in.
+
+    Identity is the email or phone itself rather than a provider-specific id,
+    so signing in with Google and then with an emailed code lands on the same
+    account instead of silently making a second one with the same inbox. No
+    password is stored on purpose: every route in is either a one-time code or
+    Google, so there is nothing here worth stealing.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    email: Mapped[Optional[str]] = mapped_column(String(320), unique=True, index=True, default=None)
+    phone: Mapped[Optional[str]] = mapped_column(String(32), unique=True, index=True, default=None)
+    name: Mapped[Optional[str]] = mapped_column(String(200), default=None)
+    picture: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    tier: Mapped[Tier] = mapped_column(Enum(Tier), default=Tier.FREE, index=True)
+    # How the account was first created, for support questions only.
+    signup_method: Mapped[str] = mapped_column(String(16), default="otp")
+    tier_expires_at: Mapped[Optional[dt.datetime]] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    @property
+    def effective_tier(self) -> Tier:
+        """Premium that has run out is free again, without a cleanup job."""
+        if self.tier is Tier.PREMIUM and self.tier_expires_at is not None:
+            if _aware(self.tier_expires_at) < _now():
+                return Tier.FREE
+        return self.tier
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "email": self.email,
+            "phone": self.phone,
+            "name": self.name,
+            "picture": self.picture,
+            "tier": self.effective_tier.value,
+            "tier_expires_at": (
+                _aware(self.tier_expires_at).isoformat() if self.tier_expires_at else None
+            ),
+            "created_at": _aware(self.created_at).isoformat() if self.created_at else None,
+        }
+
+
+class OtpCode(Base):
+    """A one-time code sent to an email address or a phone number.
+
+    The code is stored hashed. It is a six-digit number, so a leaked database
+    would otherwise hand over every live login, and hashing costs nothing
+    here. Attempts are counted so a code cannot be brute-forced in the minutes
+    it is alive — a million guesses is not many for a script.
+    """
+
+    __tablename__ = "otp_codes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    destination: Mapped[str] = mapped_column(String(320), index=True)
+    channel: Mapped[str] = mapped_column(String(8))          # "email" | "phone"
+    code_hash: Mapped[str] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    consumed: Mapped[bool] = mapped_column(default=False)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UsageEvent(Base):
+    """One charge against a user's daily allowance.
+
+    Recorded in estimated model calls rather than in videos, because a
+    four-hour video costs about twenty-two calls and a half-hour one about
+    four: counting videos would overcharge the short ones and undercharge
+    exactly the long ones this allowance exists to limit.
+    """
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    kind: Mapped[str] = mapped_column(String(24), default="process")
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    duration_sec: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class Payment(Base):
+    """A Razorpay order and what became of it.
+
+    Kept even in test mode: the point of the record is that an upgrade can be
+    traced back to something, and a test-mode order is still something.
+    """
+
+    __tablename__ = "payments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    order_id: Mapped[str] = mapped_column(String(64), index=True)
+    payment_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    amount_paise: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    status: Mapped[str] = mapped_column(String(16), default="created", index=True)
+    mode: Mapped[str] = mapped_column(String(8), default="test")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 def init_db() -> None:
     """Create tables if they don't exist. Called once at startup."""
     config.ensure_dirs()

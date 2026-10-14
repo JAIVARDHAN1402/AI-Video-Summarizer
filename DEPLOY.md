@@ -121,6 +121,29 @@ Only needed for requests the browser makes directly rather than through the
 proxy, but set it — it costs nothing and the failure mode (silently blocked
 requests) is annoying to diagnose.
 
+## 6. Optional reader accounts and premium tier
+
+The backend is open by default. To enable the account menu in the bundled
+frontend, add these backend secrets before deploy:
+
+```
+VS_JWT_SECRET = <long random secret>
+VS_DEV_OTP_ECHO = 0
+VS_SMTP_HOST = <smtp host>
+VS_SMTP_USER = <smtp user>
+VS_SMTP_PASSWORD = <smtp password>
+VS_SMTP_FROM = <from address>
+```
+
+For Google, register `https://<your-frontend>/auth/google` as the exact OAuth
+redirect URI and set `VS_GOOGLE_CLIENT_ID`, `VS_GOOGLE_CLIENT_SECRET`, and
+`VS_GOOGLE_REDIRECT_URI` on the backend. The callback checks the browser's
+one-time state before exchanging Google's code.
+
+Premium checkout remains hidden until both `VS_RAZORPAY_KEY_ID` and
+`VS_RAZORPAY_KEY_SECRET` are set. Use Razorpay test keys first; the server,
+not the browser, verifies the payment signature before changing a tier.
+
 ## What is not in the image
 
 `.gitignore` excludes model weights, so a fresh deployment has:

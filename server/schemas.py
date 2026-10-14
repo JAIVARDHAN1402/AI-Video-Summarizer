@@ -137,3 +137,24 @@ class ChatThreadRequest(BaseModel):
     scope: Optional[str] = Field(None, max_length=64)
     title: Optional[str] = Field(None, max_length=200)
     turns: Optional[list[dict[str, Any]]] = None
+
+
+class OtpRequest(BaseModel):
+    channel: Literal["email", "phone"]
+    destination: str = Field(..., max_length=320)
+
+
+class OtpVerify(BaseModel):
+    channel: Literal["email", "phone"]
+    destination: str = Field(..., max_length=320)
+    code: str = Field(..., max_length=12)
+
+
+class GoogleCallback(BaseModel):
+    code: str = Field(..., max_length=2048)
+
+
+class PaymentConfirm(BaseModel):
+    order_id: str = Field(..., max_length=64)
+    payment_id: str = Field(..., max_length=64)
+    signature: str = Field(..., max_length=256)

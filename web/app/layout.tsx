@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AccountMenu } from "@/components/AccountMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
@@ -61,6 +62,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <span className="mx-1 h-5 w-px bg-border" />
             <ThemeToggle />
+            <AccountMenu />
           </nav>
         </header>
 

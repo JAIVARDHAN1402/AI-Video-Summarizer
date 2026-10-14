@@ -12,9 +12,16 @@ import json
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Anchored to the package, like core.config.CACHE_ROOT, so the service behaves
 # the same whatever directory it is launched from.
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+
+# The Streamlit/core entry points load this file already, but the FastAPI
+# service can start without importing them. Load the project-local variables
+# here as well so `python -m server.main` honours the same `.env` file.
+load_dotenv(PACKAGE_ROOT / ".env")
 
 # --- Storage -----------------------------------------------------------------
 # Job rows, telemetry, and the scheduler's learned cost models. SQLite by
@@ -151,3 +158,60 @@ API_VERSION = "1.0.0"
 def ensure_dirs() -> None:
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# --- Accounts and tiers ----------------------------------------------------
+# Sign-in routes. Each is optional: with none configured the API stays open,
+# which is how it has always run locally.
+GOOGLE_CLIENT_ID = os.getenv("VS_GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("VS_GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REDIRECT_URI = os.getenv(
+    "VS_GOOGLE_REDIRECT_URI", "http://localhost:3000/auth/google"
+).strip()
+
+# Email one-time codes. Without SMTP credentials the code is written to the
+# log instead of sent, which is what makes the whole flow demonstrable with
+# nothing configured — and is refused outright when DEV_OTP_ECHO is off.
+SMTP_HOST = os.getenv("VS_SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("VS_SMTP_PORT", "587"))
+SMTP_USER = os.getenv("VS_SMTP_USER", "").strip()
+SMTP_PASSWORD = os.getenv("VS_SMTP_PASSWORD", "").strip()
+SMTP_FROM = os.getenv("VS_SMTP_FROM", "").strip() or SMTP_USER
+
+# Phone one-time codes. MSG91 is the cheap Indian option; Twilio works too.
+# Both cost money per message, so this stays off unless deliberately set.
+SMS_PROVIDER = os.getenv("VS_SMS_PROVIDER", "").strip().lower()   # msg91 | twilio
+SMS_API_KEY = os.getenv("VS_SMS_API_KEY", "").strip()
+SMS_SENDER = os.getenv("VS_SMS_SENDER", "").strip()
+SMS_TWILIO_SID = os.getenv("VS_TWILIO_SID", "").strip()
+SMS_TWILIO_FROM = os.getenv("VS_TWILIO_FROM", "").strip()
+
+# With no sender configured, write the code to the log so the flow can be
+# demonstrated. Never leave this on anywhere the log is not private.
+DEV_OTP_ECHO = os.getenv("VS_DEV_OTP_ECHO", "1") not in ("0", "false", "False")
+
+OTP_LENGTH = int(os.getenv("VS_OTP_LENGTH", "6"))
+OTP_TTL_SEC = int(os.getenv("VS_OTP_TTL_SEC", "600"))
+OTP_MAX_ATTEMPTS = int(os.getenv("VS_OTP_MAX_ATTEMPTS", "5"))
+# One code per destination per this many seconds, so the endpoint cannot be
+# used to send somebody a hundred messages.
+OTP_RESEND_SEC = int(os.getenv("VS_OTP_RESEND_SEC", "45"))
+
+SESSION_TTL_DAYS = int(os.getenv("VS_SESSION_TTL_DAYS", "30"))
+
+# --- What each tier may do -------------------------------------------------
+# Counted in model calls rather than videos: a 4-hour video is about 22 calls
+# and a half-hour one about 4, so a per-video limit would charge them alike.
+FREE_MAX_VIDEO_HOURS = float(os.getenv("VS_FREE_MAX_VIDEO_HOURS", "4"))
+FREE_DAILY_CALLS = int(os.getenv("VS_FREE_DAILY_CALLS", "40"))
+PREMIUM_MAX_VIDEO_HOURS = float(os.getenv("VS_PREMIUM_MAX_VIDEO_HOURS", "15"))
+PREMIUM_DAILY_CALLS = int(os.getenv("VS_PREMIUM_DAILY_CALLS", "400"))
+
+# --- Payments --------------------------------------------------------------
+# Test keys by default. Live keys need a registered business, GST and a
+# refund policy, none of which a project needs to demonstrate the flow.
+RAZORPAY_KEY_ID = os.getenv("VS_RAZORPAY_KEY_ID", "").strip()
+RAZORPAY_KEY_SECRET = os.getenv("VS_RAZORPAY_KEY_SECRET", "").strip()
+RAZORPAY_MODE = os.getenv("VS_RAZORPAY_MODE", "test").strip().lower()
+PREMIUM_PRICE_PAISE = int(os.getenv("VS_PREMIUM_PRICE_PAISE", "19900"))   # Rs 199
+PREMIUM_DAYS = int(os.getenv("VS_PREMIUM_DAYS", "30"))

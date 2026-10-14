@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Circle, Loader2, Square, XCircle } from "lucide-react";
-import { api, humanDuration, type JobView } from "@/lib/api";
+import { api, hasSessionToken, humanDuration, type JobView } from "@/lib/api";
 
 const STAGES: [string, string][] = [
   ["ingest", "Fetch & prepare video"],
@@ -39,21 +39,26 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       if (j.status === "failed" || j.status === "cancelled") {
         stopped = true;
         clearInterval(poll);
-        es.close();
+        es?.close();
       }
     };
 
-    const es = new EventSource(`/api/jobs/${id}/events`);
-    const consume = (e: Event) => {
-      try {
-        apply(JSON.parse((e as MessageEvent).data) as JobView);
-      } catch {
-        /* a partial frame — the next poll will catch up */
-      }
-    };
-    es.addEventListener("progress", consume);
-    es.addEventListener("end", consume);
-    es.onerror = () => es.close();
+    // EventSource cannot attach an Authorization header. Authenticated readers
+    // still receive the same live state through the deliberately short poll;
+    // anonymous/local development retains SSE's instant updates.
+    const es = hasSessionToken() ? null : new EventSource(`/api/jobs/${id}/events`);
+    if (es) {
+      const consume = (e: Event) => {
+        try {
+          apply(JSON.parse((e as MessageEvent).data) as JobView);
+        } catch {
+          /* a partial frame — the next poll will catch up */
+        }
+      };
+      es.addEventListener("progress", consume);
+      es.addEventListener("end", consume);
+      es.onerror = () => es.close();
+    }
 
     const tick = async () => {
       try {
@@ -67,7 +72,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
     return () => {
       stopped = true;
-      es.close();
+      es?.close();
       clearInterval(poll);
     };
   }, [id, router]);
