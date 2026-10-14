@@ -40,3 +40,4 @@ server_state.db
 data/highlight/
 ml/prepared/
 ml/checkpoints/
+logs/
