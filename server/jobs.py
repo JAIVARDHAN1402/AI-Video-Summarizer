@@ -396,6 +396,45 @@ def _fleet_members() -> list[dict]:
     }]
 
 
+def release_orphans() -> int:
+    """Fail jobs left mid-flight by a server that is no longer running.
+
+    With the in-process backend the work lives inside this process, so a
+    restart means every job that was running died with it. The row stays
+    RUNNING for ever otherwise, and the page shows a progress bar that will
+    never move again — which reads as the pipeline being stuck rather than as
+    the server having been restarted under it.
+
+    Redis is left alone: there the workers are separate processes and a job
+    that was running probably still is.
+    """
+    if config.QUEUE_BACKEND == "redis":
+        return 0
+
+    released = 0
+    with session() as db:
+        stale = (
+            db.query(Job)
+            .filter(Job.status.in_([JobStatus.RUNNING, JobStatus.QUEUED]))
+            .all()
+        )
+        for job in stale:
+            job.status = JobStatus.FAILED
+            job.stage = "error"
+            job.error = (
+                "The server restarted while this job was running, so it was "
+                "interrupted. Everything finished before that point is cached: "
+                "submitting the same link again offers to resume from there."
+            )
+            job.message = "Interrupted by a server restart."
+            released += 1
+        if released:
+            db.commit()
+    if released:
+        logger.warning("released %d job(s) left running by a previous process", released)
+    return released
+
+
 def fleet_status() -> dict:
     """What the local fleet is running as — surfaced on /api/health."""
     return {"backend": config.QUEUE_BACKEND, "members": _fleet_members()}

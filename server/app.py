@@ -77,6 +77,13 @@ def _startup() -> None:
         warm.start()
     except Exception:
         logger.warning("model warm-up could not start", exc_info=True)
+    # Anything still marked running belongs to a process that no longer
+    # exists, and a progress bar that will never move reads as a stuck
+    # pipeline rather than as a restart.
+    try:
+        jobs.release_orphans()
+    except Exception:
+        logger.warning("could not release orphaned jobs", exc_info=True)
     storage.get_storage()  # log the backend, fail fast on a bad S3 config
     logger.info("auth: %s", "enabled" if config.AUTH_ENABLED else "disabled (open)")
     if config.QUEUE_BACKEND == "redis":

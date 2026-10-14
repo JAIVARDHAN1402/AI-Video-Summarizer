@@ -68,3 +68,51 @@ def test_every_pipeline_stage_can_be_asked_about():
     """A stage missing from the map would silently never be reported as
     reusable, which is the bug this exists to prevent."""
     assert set(cache.STAGE_ARTIFACTS) == set(config.STAGE_WEIGHTS)
+
+
+# --- a job nobody is running --------------------------------------------
+# The API was killed mid-transcription when the terminal tab it was tied to
+# closed. No exception, no crash log — the row simply stayed RUNNING, and the
+# page kept showing a progress bar that would never move again.
+
+def test_a_restart_fails_the_jobs_it_interrupted(monkeypatch, tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from server import config as server_config
+    from server import db as server_db
+    from server import jobs
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'orphans.db'}", future=True)
+    server_db.Base.metadata.create_all(engine)
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    monkeypatch.setattr(jobs, "session", maker)
+    monkeypatch.setattr(server_config, "QUEUE_BACKEND", "inprocess")
+
+    with maker() as s:
+        s.add_all([
+            server_db.Job(source_ref="a", status=server_db.JobStatus.RUNNING, stage="analyze"),
+            server_db.Job(source_ref="b", status=server_db.JobStatus.QUEUED, stage="queued"),
+            server_db.Job(source_ref="c", status=server_db.JobStatus.DONE, stage="done"),
+        ])
+        s.commit()
+
+    assert jobs.release_orphans() == 2
+
+    with maker() as s:
+        by_ref = {j.source_ref: j for j in s.query(server_db.Job).all()}
+        assert by_ref["a"].status is server_db.JobStatus.FAILED
+        assert by_ref["b"].status is server_db.JobStatus.FAILED
+        assert "restarted" in (by_ref["a"].error or "")
+        assert "resume" in (by_ref["a"].error or ""), "it should say what to do next"
+        assert by_ref["c"].status is server_db.JobStatus.DONE, "a finished job is untouched"
+
+
+def test_redis_workers_are_left_alone(monkeypatch):
+    """There the workers are separate processes, and a job that was running
+    probably still is."""
+    from server import config as server_config
+    from server import jobs
+
+    monkeypatch.setattr(server_config, "QUEUE_BACKEND", "redis")
+    assert jobs.release_orphans() == 0
