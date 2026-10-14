@@ -1,8 +1,6 @@
 # AI-Based Video Summarization System
 
-**VIT Vellore — Project-I (BCSE497J)**
-Jaivardhan Singh (23BCI0036) · Sujay Chand (23BCE0217) · Harshit Raj (23BCE0190)
-Guide: Dr. Deepa K, SCOPE
+
 
 Given a video (YouTube URL or local upload), this system produces:
 
