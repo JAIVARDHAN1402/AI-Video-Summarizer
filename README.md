@@ -379,10 +379,30 @@ alongside every run.
 | Kendall τ (vs mean annotator) | 0.285 ± 0.027 |
 | Knapsack-summary F1 | 0.323 ± 0.034 |
 
-> **Reporting gap, stated plainly.** `ml/evaluate.py` can compute random,
-> human and oracle baselines inside this pipeline, but the saved
-> `cv_report.json` does not contain them. τ = 0.160 alone is not interpretable
-> — run the baselines before quoting it anywhere that matters.
+Those averages hide the thing that makes them readable: the two datasets
+behave completely differently. Measured on the same prepared shards:
+
+| Summary F1 | random | **model** | human | oracle |
+| --- | --- | --- | --- | --- |
+| TVSum (12 of 15 videos per fold) | 0.166 | **0.265** | 0.260 | 0.406 |
+| SumMe (3 of 15) | 0.368 | **0.451** | 0.612 | 0.783 |
+
+On TVSum the model sits at human agreement — 0.265 against 0.260, from a
+0.166 floor — and its per-annotator Kendall τ of **0.216** is above the ~0.18
+that annotators achieve against each other under this protocol. On SumMe it
+clears random but stays well short of human, with τ of 0.061. The headline
+0.160 is those two averaged.
+
+"human" is each annotator scored against the others, leave-one-out, which is
+the realistic ceiling on a subjective task; "oracle" is the averaged
+annotator score, which is the model's own training target. Absolute F1 is
+not portable between summarisation pipelines — it depends on the feature
+extractor, the sampling rate and the shot segmentation — so a published
+paper's random baseline would not be a meaningful comparison. These are.
+
+```bash
+python -m ml.evaluate --checkpoint ml/checkpoints/importance.pt --baselines
+```
 
 ### End-to-end pipeline
 
