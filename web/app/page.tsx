@@ -4,6 +4,7 @@ import {
   ArrowRight,
   AudioLines,
   Clock,
+  Gauge,
   History,
   Layers,
   ListChecks,
@@ -19,8 +20,10 @@ import {
   hasSessionToken,
   humanDuration,
   mmss,
+  quotaRefusalOf,
   type Preflight,
   type Profile,
+  type QuotaRefusal,
   type VideoSummary,
   type VideoType,
 } from "@/lib/api";
@@ -59,6 +62,13 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile>("balanced");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * A refusal the server explained — the video is longer than the plan
+   * covers, or the day's calls are spent. Kept apart from `error` because
+   * there is something to do about it, and printing the JSON it arrived in
+   * is not it.
+   */
+  const [refused, setRefused] = useState<QuotaRefusal | null>(null);
   /**
    * Set when the link has been here before. Submitting used to resume from
    * the cache without saying so, and the run that followed reported 17
@@ -132,7 +142,9 @@ export default function Home() {
       }
       router.push(`/jobs/${job.id}`);
     } catch (err: any) {
-      setError(err.message || "Could not start the job.");
+      const refusal = quotaRefusalOf(err);
+      if (refusal) setRefused(refusal);
+      else setError(err.message || "Could not start the job.");
       setBusy(false);
     }
   }
@@ -266,6 +278,8 @@ export default function Home() {
             </div>
 
             {error && <p className="mt-3 text-[0.85rem] text-danger">{error}</p>}
+
+            {refused && <OverPlan refusal={refused} onDismiss={() => setRefused(null)} />}
 
             {found && <AlreadyHere found={found} onPick={start} onCancel={() => setFound(null)} />}
 
@@ -463,6 +477,85 @@ function AlreadyHere({
         actually ran. Process fresh when the number itself is the point — a
         measurement, a demo, or a report.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Shown when the server refused the job because of the reader's plan.
+ *
+ * The refusal already carries everything needed to explain itself — how long
+ * the video is, what the plan covers, how many calls are left and when they
+ * come back. Printing the JSON it arrived in told the reader nothing they
+ * could act on.
+ */
+function OverPlan({
+  refusal,
+  onDismiss,
+}: {
+  refusal: QuotaRefusal;
+  onDismiss: () => void;
+}) {
+  const tooLong = refusal.reason === "video_too_long";
+  return (
+    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/[0.06] p-4">
+      <p className="flex items-center gap-1.5 text-[0.84rem] font-semibold text-warning">
+        <Gauge className="h-4 w-4" />
+        {tooLong ? "Longer than your plan covers" : "Today's processing is used up"}
+      </p>
+
+      <p className="mt-1.5 text-[0.85rem] leading-relaxed text-ink">{refusal.message}</p>
+
+      {tooLong ? (
+        <p className="mt-1.5 text-[0.8rem] leading-relaxed text-ink-muted">
+          Premium covers videos up to 15 hours. A shorter video, or a clip of this one, works
+          on the free plan right now.
+        </p>
+      ) : (
+        <p className="mt-1.5 text-[0.8rem] leading-relaxed text-ink-muted">
+          The allowance is counted in model calls rather than videos, because a four-hour
+          video costs about five times a half-hour one.
+          {refusal.resets_at
+            ? ` It comes back at ${new Date(refusal.resets_at).toLocaleString()}.`
+            : ""}
+        </p>
+      )}
+
+      {!tooLong && typeof refusal.daily_calls === "number" && (
+        <div className="mt-3">
+          <div className="h-1.5 overflow-hidden rounded-full bg-surface-hover">
+            <div
+              className="h-full rounded-full bg-warning"
+              style={{
+                width: `${Math.min(100, Math.round(((refusal.used ?? 0) / refusal.daily_calls) * 100))}%`,
+              }}
+            />
+          </div>
+          <p className="mt-1.5 font-mono text-[0.72rem] tabular-nums text-ink-dim">
+            {refusal.used ?? 0} of {refusal.daily_calls} used · this video needs{" "}
+            {refusal.needed ?? "?"}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-3.5 flex flex-wrap gap-2">
+        {refusal.tier !== "premium" && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              // The upgrade lives in the account menu, which listens for this.
+              window.dispatchEvent(new Event("vs-open-auth"));
+              onDismiss();
+            }}
+          >
+            See premium
+          </button>
+        )}
+        <button type="button" onClick={onDismiss} className="btn">
+          Try another video
+        </button>
+      </div>
     </div>
   );
 }

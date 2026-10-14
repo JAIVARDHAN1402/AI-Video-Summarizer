@@ -324,10 +324,65 @@ export interface VideoResult {
   highlight: { url: string; seconds: number | null; scene_ids: number[] } | null;
 }
 
+/** A refusal the server explained. `detail` carries why, and what the
+ * limit was, so the page can offer the way past it rather than printing
+ * the JSON it arrived in. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: Record<string, any> | null;
+
+  constructor(status: number, message: string, detail: Record<string, any> | null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** The quota refusals create_job raises, which the page renders as an offer. */
+export interface QuotaRefusal {
+  reason: "video_too_long" | "daily_calls_exhausted";
+  message: string;
+  tier?: string;
+  duration_hours?: number;
+  limit_hours?: number;
+  needed?: number;
+  used?: number;
+  remaining?: number;
+  daily_calls?: number;
+  resets_at?: string;
+}
+
+export function quotaRefusalOf(error: unknown): QuotaRefusal | null {
+  if (!(error instanceof ApiError) || error.status !== 402) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail.reason !== "string") return null;
+  return detail as QuotaRefusal;
+}
+
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 300)}` : ""}`);
+    let detail: Record<string, any> | null = null;
+    let message = "";
+    try {
+      const parsed = JSON.parse(body);
+      // FastAPI wraps what the handler raised in "detail"; it is an object
+      // when the handler had something to say and a string otherwise.
+      const inner = parsed?.detail ?? parsed;
+      if (inner && typeof inner === "object") {
+        detail = inner;
+        message = typeof inner.message === "string" ? inner.message : "";
+      } else if (typeof inner === "string") {
+        message = inner;
+      }
+    } catch {
+      /* not JSON — fall back to the raw text below */
+    }
+    if (!message) {
+      message = `${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 300)}` : ""}`;
+    }
+    throw new ApiError(res.status, message, detail);
   }
   return res.json() as Promise<T>;
 }
