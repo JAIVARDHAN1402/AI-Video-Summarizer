@@ -3,559 +3,275 @@
 import {
   ArrowRight,
   AudioLines,
-  Clock,
+  BookOpen,
+  Code2,
   Gauge,
-  History,
-  Layers,
   ListChecks,
+  MessageSquareQuote,
   Network,
+  ScanText,
   Sparkles,
-  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import {
-  api,
-  hasSessionToken,
-  humanDuration,
-  mmss,
-  quotaRefusalOf,
-  type Preflight,
-  type Profile,
-  type QuotaRefusal,
-  type VideoSummary,
-  type VideoType,
-} from "@/lib/api";
+import { useEffect } from "react";
+import { LogoMark } from "@/components/Logo";
+import { openSignIn, useSession } from "@/components/Session";
 
-const VIDEO_TYPES: { value: VideoType; label: string }[] = [
-  { value: "lecture", label: "Lecture / tutorial" },
-  { value: "coding", label: "Coding / algorithms" },
-  { value: "meeting", label: "Meeting recording" },
-  { value: "interview", label: "Interview / podcast" },
-  { value: "talk", label: "Conference talk" },
-  { value: "news", label: "News segment" },
-  { value: "documentary", label: "Documentary / explainer" },
-  { value: "other", label: "Other" },
+/**
+ * What the product is, for somebody who has never seen it.
+ *
+ * Everything claimed here is a number measured in this repository rather
+ * than a round figure chosen because it sounds good — a landing page is
+ * exactly where a project starts inflating itself, and the evidence is good
+ * enough that it does not need to.
+ */
+
+const WHAT_YOU_GET = [
+  {
+    icon: BookOpen,
+    tone: "text-accent bg-accent/[0.12]",
+    title: "A teachable explanation",
+    body: "The video taught back section by section, one per two and a half minutes, each linked to the moment it covers. Not a paragraph that throws the rest away.",
+  },
+  {
+    icon: Code2,
+    tone: "text-success bg-success/[0.12]",
+    title: "Every problem it solves",
+    body: "A three-hour SQL video works through seventy questions and then they are gone. Here they are a list, each with its solution — and in any dialect of the same family, so MySQL becomes Oracle or SQL Server on request.",
+  },
+  {
+    icon: MessageSquareQuote,
+    tone: "text-violet bg-violet/[0.12]",
+    title: "Answers that cite the video",
+    body: "Ask anything and the answer carries the timestamps it came from. When the video does not cover it, it says so instead of inventing something.",
+  },
+  {
+    icon: ScanText,
+    tone: "text-cyan bg-cyan/[0.12]",
+    title: "What was on the screen",
+    body: "Slides, diagrams and whiteboards are read as images, not just OCR'd, so a drawing the speaker never describes aloud still makes it into the explanation.",
+  },
+  {
+    icon: ListChecks,
+    tone: "text-accent bg-accent/[0.12]",
+    title: "A quiz, flashcards, a mind map",
+    body: "Built from the explanation the pipeline already produced, with distractors drawn from the misconceptions the video itself warns about.",
+  },
+  {
+    icon: AudioLines,
+    tone: "text-warning bg-warning/[0.14]",
+    title: "A five-minute audio overview",
+    body: "Two voices working through what the video covers, for when reading is not an option.",
+  },
 ];
 
-const PROFILES: { value: Profile; label: string; hint: string }[] = [
-  { value: "fast", label: "Fast", hint: "Quick pass, lighter analysis" },
-  { value: "balanced", label: "Balanced", hint: "Full explanation, ~5 min target" },
-  { value: "accurate", label: "Accurate", hint: "Largest models, no time limit" },
+const STAGES = [
+  { n: "M1", name: "Fetch", body: "Download or upload, probe the duration, extract the audio." },
+  { n: "M2", name: "Transcribe", body: "Split at silences and run Whisper in parallel — 20× realtime on a 67-minute lecture." },
+  { n: "M3", name: "See", body: "Scene detection, keyframes, objects, and the text on screen. Runs alongside M2, not after it." },
+  { n: "M4", name: "Align", body: "Tie every sentence to the scene it was spoken over." },
+  { n: "M5", name: "Understand", body: "A language model reads the transcript, the scenes and the keyframes together. Long videos are read in windows." },
+  { n: "M6", name: "Index", body: "A FAISS index so questions are answered from passages, with citations." },
+  { n: "M7", name: "Rank", body: "A trained model scores which scenes matter, and cuts the highlight reel." },
 ];
 
-const CAPABILITIES = [
-  { icon: Sparkles, label: "Teachable explanation", hint: "section by section, with timestamps" },
-  { icon: ListChecks, label: "Quiz", hint: "written from what the video teaches" },
-  { icon: AudioLines, label: "Audio overview", hint: "two voices, about five minutes" },
-  { icon: Network, label: "Mind map", hint: "the chapter structure at a glance" },
+const EVIDENCE = [
+  { figure: "5.3 min", label: "to process a 67-minute lecture", note: "was ~50 minutes before the scheduler and the parallel ASR" },
+  { figure: "63.3%", label: "of jobs met their time budget", note: "against 6.7% for a fixed configuration, measured over 30 recorded runs" },
+  { figure: "0.265", label: "highlight F1 on TVSum", note: "human agreement is 0.260 and random is 0.166, measured in this pipeline" },
+  { figure: "180", label: "tests passing", note: "every fix in this project arrived with the test that catches it again" },
 ];
 
-export default function Home() {
+export default function Landing() {
+  const { signedIn, ready } = useSession();
   const router = useRouter();
-  const [mode, setMode] = useState<"url" | "upload">("url");
-  const [url, setUrl] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [videoType, setVideoType] = useState<VideoType>("lecture");
-  const [topic, setTopic] = useState("");
-  const [profile, setProfile] = useState<Profile>("balanced");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /**
-   * A refusal the server explained — the video is longer than the plan
-   * covers, or the day's calls are spent. Kept apart from `error` because
-   * there is something to do about it, and printing the JSON it arrived in
-   * is not it.
-   */
-  const [refused, setRefused] = useState<QuotaRefusal | null>(null);
-  /**
-   * Set when the link has been here before. Submitting used to resume from
-   * the cache without saying so, and the run that followed reported 17
-   * seconds for a three-hour video — true of that run, and useless as a
-   * measurement. The choice is the reader's now.
-   */
-  const [found, setFound] = useState<Preflight | null>(null);
-  const [recent, setRecent] = useState<VideoSummary[] | null>(null);
-  const [loginRequired, setLoginRequired] = useState(false);
 
-  // The page is also the way back into finished work, so it should never be a
-  // dead end for someone who has processed something before.
+  // Somebody already signed in has no use for the pitch.
   useEffect(() => {
-    api
-      .videos()
-      .then((v) => setRecent([...v].sort((a, b) => b.mtime - a.mtime).slice(0, 6)))
-      .catch(() => setRecent([]));
-  }, []);
-
-  const ready = mode === "url" ? !!url.trim() : !!file;
-
-  /** Stop before preflight, upload, or a job is created — never after work starts. */
-  async function requiresSignIn(): Promise<boolean> {
-    try {
-      const methods = await api.authMethods();
-      if (methods.auth_required && !hasSessionToken()) {
-        setLoginRequired(true);
-        return true;
-      }
-    } catch {
-      // The eventual request retains its normal, useful network error.
-    }
-    return false;
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!ready) return;
-    setError(null);
-    if (await requiresSignIn()) return;
-    // Uploads get a fresh id every time, so only a pasted link can collide.
-    if (mode === "url") {
-      setBusy(true);
-      try {
-        const pre = await api.preflight({ url: url.trim() });
-        if (pre.known) {
-          setFound(pre);
-          setBusy(false);
-          return;
-        }
-      } catch {
-        // Not knowing is not a reason to refuse to start; fall through.
-      }
-    }
-    await start(false);
-  }
-
-  async function start(force: boolean) {
-    if (await requiresSignIn()) return;
-    setFound(null);
-    setBusy(true);
-    setError(null);
-    try {
-      const common = { video_type: videoType, topic: topic.trim(), profile, force };
-      let job;
-      if (mode === "upload" && file) {
-        const { upload_id } = await api.upload(file);
-        job = await api.createJob({ upload_id, ...common });
-      } else {
-        job = await api.createJob({ url: url.trim(), ...common });
-      }
-      router.push(`/jobs/${job.id}`);
-    } catch (err: any) {
-      const refusal = quotaRefusalOf(err);
-      if (refusal) setRefused(refusal);
-      else setError(err.message || "Could not start the job.");
-      setBusy(false);
-    }
-  }
+    if (ready && signedIn) router.replace("/app");
+  }, [ready, signedIn, router]);
 
   return (
-    // The shell no longer scrolls the window, so this page owns its scroll.
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1080px] px-5 pb-20 pt-10">
-        <header className="mb-8 max-w-[620px]">
-          <span className="pill pill-accent mb-3.5">AI video understanding</span>
-          <h1 className="text-[2.5rem] font-extrabold leading-[1.08] tracking-[-0.02em] text-ink">
+      {/* ---------------- hero ---------------- */}
+      <section className="relative overflow-hidden border-b border-border">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-[-18rem] h-[36rem] w-[52rem] -translate-x-1/2 rounded-full opacity-[0.16] blur-[120px]"
+          style={{ background: "radial-gradient(circle, var(--c-accent) 0%, transparent 70%)" }}
+        />
+        <div className="relative mx-auto max-w-[1080px] px-5 pb-16 pt-20 text-center">
+          <LogoMark className="mx-auto h-14 w-14" />
+          <span className="pill pill-accent mt-5 inline-flex">AI video understanding</span>
+          <h1 className="mx-auto mt-4 max-w-[760px] text-[clamp(2.1rem,5vw,3.4rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-ink">
             Understand any video
             <br />
             <span className="text-accent">without watching it</span>
           </h1>
-          <p className="mt-3.5 text-[1rem] leading-relaxed text-ink-muted">
-            Paste a link. You get a teachable explanation, section by section, with the
-            algorithm and code for programming videos &mdash; and an assistant that cites the
+          <p className="mx-auto mt-5 max-w-[620px] text-[1.03rem] leading-relaxed text-ink-muted">
+            Paste a link to a lecture, a tutorial or a three-hour practice
+            session. You get it taught back to you section by section, with the
+            code, the questions it solves, and an assistant that cites the
             moment it got each answer.
           </p>
-        </header>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
-          {/* ---------------- the form ---------------- */}
-          <form onSubmit={submit} className="card p-5">
-            <div className="mb-4 flex w-fit gap-0.5 rounded-sm border border-border bg-bg-elevated p-1">
-              {(["url", "upload"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className={`rounded-xs px-3.5 py-1.5 text-[0.82rem] font-semibold transition-colors ${
-                    mode === m ? "bg-surface text-ink shadow-card" : "text-ink-dim hover:text-ink"
-                  }`}
-                >
-                  {m === "url" ? "Paste a link" : "Upload a file"}
-                </button>
-              ))}
-            </div>
-
-            {mode === "url" ? (
-              <div className="mb-3.5">
-                <label className="label" htmlFor="url">
-                  Video URL
-                </label>
-                <input
-                  id="url"
-                  className="input"
-                  placeholder="https://www.youtube.com/watch?v=…"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                />
-              </div>
-            ) : (
-              <div className="mb-3.5">
-                <label className="label" htmlFor="file">
-                  Video file
-                </label>
-                <label
-                  htmlFor="file"
-                  className="flex cursor-pointer items-center gap-2.5 rounded-sm border border-dashed border-border-strong bg-surface-raised px-3.5 py-4 text-[0.88rem] text-ink-muted transition-colors hover:border-accent hover:text-ink"
-                >
-                  <Upload className="h-4 w-4 flex-shrink-0" />
-                  <span className="min-w-0 truncate">
-                    {file ? file.name : "Choose a video file…"}
-                  </span>
-                </label>
-                <input
-                  id="file"
-                  type="file"
-                  accept="video/*"
-                  className="hidden"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
-              </div>
-            )}
-
-            <div className="mb-3.5 grid gap-3.5 sm:grid-cols-2">
-              <div>
-                <label className="label" htmlFor="type">
-                  What kind of video is this?
-                </label>
-                <select
-                  id="type"
-                  className="select"
-                  value={videoType}
-                  onChange={(e) => setVideoType(e.target.value as VideoType)}
-                >
-                  {VIDEO_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="label" htmlFor="topic">
-                  Topic (optional)
-                </label>
-                <input
-                  id="topic"
-                  className="input"
-                  placeholder="e.g. Backtracking, Q3 roadmap"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="mb-1">
-              <span className="label">Processing profile</span>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {PROFILES.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    onClick={() => setProfile(p.value)}
-                    className={`rounded-lg border px-3 py-2.5 text-left transition-all ${
-                      profile === p.value
-                        ? "border-accent bg-accent/[0.07]"
-                        : "border-border bg-surface-raised hover:border-border-strong"
-                    }`}
-                  >
-                    <span className="block text-[0.85rem] font-semibold text-ink">{p.label}</span>
-                    <span className="mt-0.5 block text-[0.7rem] leading-snug text-ink-dim">
-                      {p.hint}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {error && <p className="mt-3 text-[0.85rem] text-danger">{error}</p>}
-
-            {refused && <OverPlan refusal={refused} onDismiss={() => setRefused(null)} />}
-
-            {found && <AlreadyHere found={found} onPick={start} onCancel={() => setFound(null)} />}
-
-            <button className="btn btn-primary mt-4 w-full gap-2" disabled={busy || !ready}>
-              {busy ? "Starting…" : "Summarize video"}
-              {!busy && <ArrowRight className="h-4 w-4" />}
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <button onClick={openSignIn} className="btn btn-primary !px-6 !py-2.5 !text-[0.95rem]">
+              Sign in to start
+              <ArrowRight className="h-4 w-4" />
             </button>
-          </form>
-
-          {/* ---------------- what you get, and what you already have ------- */}
-          <div className="flex flex-col gap-5">
-            <section className="card p-5">
-              <h2 className="m-0 mb-3 text-[0.72rem] font-bold uppercase tracking-wide text-ink-dim">
-                What comes out
-              </h2>
-              <div className="flex flex-col gap-2.5">
-                {CAPABILITIES.map((c) => (
-                  <div key={c.label} className="flex items-start gap-2.5">
-                    <span className="tile-icon bg-accent/[0.12] text-accent">
-                      <c.icon className="h-[15px] w-[15px]" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[0.85rem] font-semibold text-ink">
-                        {c.label}
-                      </span>
-                      <span className="block text-[0.74rem] text-ink-dim">{c.hint}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="card flex min-h-0 flex-col p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="m-0 text-[0.72rem] font-bold uppercase tracking-wide text-ink-dim">
-                  Recently processed
-                </h2>
-                <Link
-                  href="/library"
-                  className="text-[0.76rem] font-medium text-accent no-underline hover:underline"
-                >
-                  Library
-                </Link>
-              </div>
-
-              {recent === null ? (
-                <div className="flex flex-col gap-2">
-                  {[0, 1, 2].map((i) => (
-                    <div key={i} className="skeleton h-5 w-full" />
-                  ))}
-                </div>
-              ) : recent.length === 0 ? (
-                <p className="text-[0.82rem] text-ink-dim">
-                  Nothing yet &mdash; the first video you process appears here.
-                </p>
-              ) : (
-                <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-                  {recent.map((v) => (
-                    <li key={v.video_id}>
-                      <Link
-                        href={`/v/${v.video_id}`}
-                        className="flex items-center gap-2 rounded-md px-1.5 py-1.5 no-underline transition-colors hover:bg-surface-hover"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-[0.82rem] text-ink">
-                          {v.title}
-                        </span>
-                        {v.has_understanding && (
-                          <Sparkles className="h-3 w-3 flex-shrink-0 text-accent" />
-                        )}
-                        {v.duration_sec ? (
-                          <span className="flex flex-shrink-0 items-center gap-1 font-mono text-[0.68rem] tabular-nums text-ink-dim">
-                            <Clock className="h-3 w-3" />
-                            {humanDuration(v.duration_sec)}
-                          </span>
-                        ) : null}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <Link
-              href="/notebooks"
-              className="card flex items-center gap-3 p-4 no-underline transition-all hover:border-border-strong hover:shadow-card-hover"
-            >
-              <span className="tile-icon bg-violet/[0.12] text-violet">
-                <Layers className="h-[15px] w-[15px]" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[0.85rem] font-semibold text-ink">
-                  Ask across several videos
-                </span>
-                <span className="block text-[0.74rem] leading-snug text-ink-dim">
-                  Group a playlist or a module into a notebook and question all of it at once.
-                </span>
-              </span>
-              <ArrowRight className="h-4 w-4 flex-shrink-0 text-ink-dim" />
-            </Link>
+            <a href="#how" className="btn !px-5 !py-2.5 no-underline">
+              How it works
+            </a>
           </div>
-        </div>
-      </div>
-      {loginRequired && (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-ink/40 px-4" role="dialog" aria-modal="true" aria-labelledby="login-gate-title">
-          <section className="card w-full max-w-[420px] p-6 shadow-card-hover">
-            <h2 id="login-gate-title" className="m-0 text-xl font-bold text-ink">Sign in to process a video</h2>
-            <p className="mt-3 text-[0.9rem] leading-relaxed text-ink-muted">
-              Your account keeps processing limits fair and lets us track your daily allowance. Sign in first, then submit your link or upload.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  setLoginRequired(false);
-                  window.dispatchEvent(new Event("vs-open-auth"));
-                }}
-              >
-                Sign in now
-              </button>
-              <button type="button" className="btn" onClick={() => setLoginRequired(false)}>Not now</button>
-            </div>
-          </section>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const STAGE_LABEL: Record<string, string> = {
-  ingest: "Fetch & prepare",
-  analyze: "Transcribe + visuals",
-  fuse: "Align transcript",
-  summarize: "Explanation",
-  index: "Q&A index",
-};
-
-/**
- * Shown when the pasted link has been processed here before.
- *
- * Resuming is usually what someone wants after a failure — the hours of
- * transcription are already paid for. But it used to happen silently, and
- * then the run report called a seventeen-second resume "624x faster than
- * watching". Both choices are offered, and each says plainly what it costs.
- */
-function AlreadyHere({
-  found,
-  onPick,
-  onCancel,
-}: {
-  found: Preflight;
-  onPick: (force: boolean) => void;
-  onCancel: () => void;
-}) {
-  const stages = Object.entries(found.stages);
-  const done = stages.filter(([, ok]) => ok);
-  return (
-    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/[0.06] p-4">
-      <p className="flex items-center gap-1.5 text-[0.84rem] font-semibold text-warning">
-        <History className="h-4 w-4" />
-        This link has been processed here before
-      </p>
-      <p className="mt-1.5 text-[0.82rem] leading-relaxed text-ink-muted">
-        {found.title ? <span className="text-ink">{found.title}</span> : "This video"}
-        {found.duration_sec ? ` · ${humanDuration(found.duration_sec)}` : ""} ·{" "}
-        {found.stages_done} of {found.stages_total} stages already done
-        {found.last_error ? " · the last run failed" : ""}
-        {found.previous_total_sec != null
-          ? ` · the last run took ${mmss(found.previous_total_sec)}`
-          : ""}
-      </p>
-
-      <ul className="mt-2.5 flex flex-wrap gap-1.5">
-        {stages.map(([name, ok]) => (
-          <li key={name} className={`pill ${ok ? "pill-success" : ""}`}>
-            {STAGE_LABEL[name] || name}
-            {ok ? " ✓" : ""}
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-3.5 flex flex-wrap gap-2">
-        <button type="button" onClick={() => onPick(false)} className="btn btn-primary">
-          Resume — reuse {done.length} finished {done.length === 1 ? "stage" : "stages"}
-        </button>
-        <button type="button" onClick={() => onPick(true)} className="btn">
-          Process fresh — redo everything
-        </button>
-        <button type="button" onClick={onCancel} className="btn">
-          Cancel
-        </button>
-      </div>
-      <p className="mt-2 text-[0.74rem] leading-relaxed text-ink-dim">
-        Resuming is faster but its timings describe only the stages that
-        actually ran. Process fresh when the number itself is the point — a
-        measurement, a demo, or a report.
-      </p>
-    </div>
-  );
-}
-
-/**
- * Shown when the server refused the job because of the reader's plan.
- *
- * The refusal already carries everything needed to explain itself — how long
- * the video is, what the plan covers, how many calls are left and when they
- * come back. Printing the JSON it arrived in told the reader nothing they
- * could act on.
- */
-function OverPlan({
-  refusal,
-  onDismiss,
-}: {
-  refusal: QuotaRefusal;
-  onDismiss: () => void;
-}) {
-  const tooLong = refusal.reason === "video_too_long";
-  return (
-    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/[0.06] p-4">
-      <p className="flex items-center gap-1.5 text-[0.84rem] font-semibold text-warning">
-        <Gauge className="h-4 w-4" />
-        {tooLong ? "Longer than your plan covers" : "Today's processing is used up"}
-      </p>
-
-      <p className="mt-1.5 text-[0.85rem] leading-relaxed text-ink">{refusal.message}</p>
-
-      {tooLong ? (
-        <p className="mt-1.5 text-[0.8rem] leading-relaxed text-ink-muted">
-          Premium covers videos up to 15 hours. A shorter video, or a clip of this one, works
-          on the free plan right now.
-        </p>
-      ) : (
-        <p className="mt-1.5 text-[0.8rem] leading-relaxed text-ink-muted">
-          The allowance is counted in model calls rather than videos, because a four-hour
-          video costs about five times a half-hour one.
-          {refusal.resets_at
-            ? ` It comes back at ${new Date(refusal.resets_at).toLocaleString()}.`
-            : ""}
-        </p>
-      )}
-
-      {!tooLong && typeof refusal.daily_calls === "number" && (
-        <div className="mt-3">
-          <div className="h-1.5 overflow-hidden rounded-full bg-surface-hover">
-            <div
-              className="h-full rounded-full bg-warning"
-              style={{
-                width: `${Math.min(100, Math.round(((refusal.used ?? 0) / refusal.daily_calls) * 100))}%`,
-              }}
-            />
-          </div>
-          <p className="mt-1.5 font-mono text-[0.72rem] tabular-nums text-ink-dim">
-            {refusal.used ?? 0} of {refusal.daily_calls} used · this video needs{" "}
-            {refusal.needed ?? "?"}
+          <p className="mt-4 text-[0.8rem] text-ink-dim">
+            A code to your email — no password to invent. Free plan covers
+            videos up to 4 hours.
           </p>
         </div>
-      )}
+      </section>
 
-      <div className="mt-3.5 flex flex-wrap gap-2">
-        {refusal.tier !== "premium" && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => {
-              // The upgrade lives in the account menu, which listens for this.
-              window.dispatchEvent(new Event("vs-open-auth"));
-              onDismiss();
-            }}
-          >
-            See premium
+      {/* ---------------- measured, not claimed ---------------- */}
+      <section className="border-b border-border bg-surface/40">
+        <div className="mx-auto grid max-w-[1080px] gap-px bg-border px-0 sm:grid-cols-2 lg:grid-cols-4">
+          {EVIDENCE.map((e) => (
+            <div key={e.label} className="bg-bg px-5 py-7 text-center">
+              <p className="font-mono text-[1.75rem] font-bold tabular-nums tracking-tight text-accent">
+                {e.figure}
+              </p>
+              <p className="mt-1 text-[0.86rem] font-semibold text-ink">{e.label}</p>
+              <p className="mt-1.5 text-[0.74rem] leading-relaxed text-ink-dim">{e.note}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ---------------- what you get ---------------- */}
+      <section className="mx-auto max-w-[1080px] px-5 py-16">
+        <h2 className="text-center text-[1.65rem] font-extrabold tracking-[-0.02em] text-ink">
+          What comes out
+        </h2>
+        <p className="mx-auto mt-2.5 max-w-[560px] text-center text-[0.92rem] leading-relaxed text-ink-muted">
+          One run produces all of this. Nothing here is generated a second time
+          from scratch — it is all derived from the same reading of the video.
+        </p>
+
+        <div className="mt-9 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {WHAT_YOU_GET.map((f) => (
+            <div key={f.title} className="card p-5">
+              <span className={`mb-3 grid h-9 w-9 place-items-center rounded-lg ${f.tone}`}>
+                <f.icon className="h-[17px] w-[17px]" />
+              </span>
+              <p className="text-[0.95rem] font-bold tracking-tight text-ink">{f.title}</p>
+              <p className="mt-1.5 text-[0.85rem] leading-relaxed text-ink-muted">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ---------------- the pipeline ---------------- */}
+      <section id="how" className="border-y border-border bg-surface/40">
+        <div className="mx-auto max-w-[1080px] px-5 py-16">
+          <h2 className="text-center text-[1.65rem] font-extrabold tracking-[-0.02em] text-ink">
+            Seven stages
+          </h2>
+          <p className="mx-auto mt-2.5 max-w-[600px] text-center text-[0.92rem] leading-relaxed text-ink-muted">
+            The pipeline aims at a wall-clock budget rather than a fixed set of
+            models: it measures the machine, reads the video&apos;s length, and
+            picks the heaviest configuration predicted to finish in time.
+          </p>
+
+          <ol className="mt-9 grid list-none gap-3 p-0 md:grid-cols-2 lg:grid-cols-4">
+            {STAGES.map((s) => (
+              <li key={s.n} className="card p-4">
+                <span className="font-mono text-[0.7rem] font-bold tracking-wide text-accent">
+                  {s.n}
+                </span>
+                <p className="mt-0.5 text-[0.92rem] font-bold tracking-tight text-ink">{s.name}</p>
+                <p className="mt-1.5 text-[0.82rem] leading-relaxed text-ink-muted">{s.body}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      {/* ---------------- the plans ---------------- */}
+      <section className="mx-auto max-w-[1080px] px-5 py-16">
+        <h2 className="text-center text-[1.65rem] font-extrabold tracking-[-0.02em] text-ink">
+          What a plan covers
+        </h2>
+        <p className="mx-auto mt-2.5 max-w-[580px] text-center text-[0.92rem] leading-relaxed text-ink-muted">
+          The allowance is counted in model calls rather than in videos,
+          because a four-hour video costs about five times a half-hour one and
+          charging them alike would be wrong in both directions.
+        </p>
+
+        <div className="mx-auto mt-9 grid max-w-[720px] gap-4 sm:grid-cols-2">
+          <div className="card p-6">
+            <p className="text-[0.72rem] font-bold uppercase tracking-wide text-ink-dim">Free</p>
+            <p className="mt-1.5 text-[1.6rem] font-extrabold tracking-tight text-ink">₹0</p>
+            <ul className="mt-4 flex list-none flex-col gap-2 p-0 text-[0.86rem] text-ink-muted">
+              <li>Videos up to <span className="font-semibold text-ink">4 hours</span></li>
+              <li>40 model calls a day</li>
+              <li>Every feature, none held back</li>
+              <li>No card, nothing to cancel</li>
+            </ul>
+            <button onClick={openSignIn} className="btn btn-primary mt-5 w-full">
+              Start here
+            </button>
+          </div>
+
+          <div className="card relative overflow-hidden border-accent/30 p-6">
+            <span className="pill pill-accent absolute right-4 top-4">For long videos</span>
+            <p className="text-[0.72rem] font-bold uppercase tracking-wide text-ink-dim">Premium</p>
+            <p className="mt-1.5 text-[1.6rem] font-extrabold tracking-tight text-ink">
+              ₹199
+              <span className="text-[0.86rem] font-semibold text-ink-dim"> / 30 days</span>
+            </p>
+            <ul className="mt-4 flex list-none flex-col gap-2 p-0 text-[0.86rem] text-ink-muted">
+              <li>Videos up to <span className="font-semibold text-ink">15 hours</span></li>
+              <li>400 model calls a day</li>
+              <li>An eleven-hour course in one run</li>
+              <li>Upgrade from inside the app</li>
+            </ul>
+            <button onClick={openSignIn} className="btn mt-5 w-full">
+              Sign in first
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------- close ---------------- */}
+      <section className="border-t border-border">
+        <div className="mx-auto max-w-[1080px] px-5 py-16 text-center">
+          <Gauge className="mx-auto h-7 w-7 text-accent" />
+          <h2 className="mt-3.5 text-[1.5rem] font-extrabold tracking-[-0.02em] text-ink">
+            Start with one video
+          </h2>
+          <p className="mx-auto mt-2.5 max-w-[500px] text-[0.92rem] leading-relaxed text-ink-muted">
+            A lecture you have been putting off, or a tutorial you only need
+            one answer from. It takes a link and a few minutes.
+          </p>
+          <button onClick={openSignIn} className="btn btn-primary mt-6 !px-6 !py-2.5">
+            <Sparkles className="h-4 w-4" />
+            Sign in to start
           </button>
-        )}
-        <button type="button" onClick={onDismiss} className="btn">
-          Try another video
-        </button>
-      </div>
+        </div>
+
+        <footer className="border-t border-border px-5 py-7">
+          <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 text-[0.78rem] text-ink-dim">
+            <span className="flex items-center gap-2">
+              <Network className="h-3.5 w-3.5" />
+              Built as a final-year project — the pipeline, the scheduler and
+              the evaluation are all in the repository.
+            </span>
+            <Link href="/app" className="no-underline hover:text-ink">
+              Open the app →
+            </Link>
+          </div>
+        </footer>
+      </section>
     </div>
   );
 }

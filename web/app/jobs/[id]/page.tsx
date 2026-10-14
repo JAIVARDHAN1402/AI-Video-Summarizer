@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { use, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Circle, Loader2, Square, XCircle } from "lucide-react";
 import { api, hasSessionToken, humanDuration, type JobView } from "@/lib/api";
+import { RequireAuth } from "@/components/RequireAuth";
 
 const STAGES: [string, string][] = [
   ["ingest", "Fetch & prepare video"],
@@ -14,7 +15,7 @@ const STAGES: [string, string][] = [
   ["index", "Build Q&A index"],
 ];
 
-export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
+function JobPageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [job, setJob] = useState<JobView | null>(null);
@@ -200,5 +201,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         )}
       </div>
     </div>
+  );
+}
+
+export default function JobPage(props: any) {
+  return (
+    <RequireAuth what="this run">
+      <JobPageInner {...props} />
+    </RequireAuth>
   );
 }

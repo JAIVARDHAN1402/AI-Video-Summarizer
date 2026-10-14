@@ -27,7 +27,7 @@ function GoogleAuthCallbackContent() {
     api.googleCallback(code)
       .then((session) => {
         setSessionToken(session.token);
-        router.replace("/");
+        router.replace("/app");
       })
       .catch((error: unknown) => {
         setMessage(error instanceof Error ? error.message : "Could not finish Google sign-in.");

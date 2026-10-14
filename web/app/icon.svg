@@ -1,0 +1,15 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- The same mark as components/Logo.tsx, with the gradient stops written
+       out: a favicon is served on its own and cannot read the app's CSS
+       variables. -->
+  <defs>
+    <linearGradient id="g" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#818cf8"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="20" height="20" rx="6" fill="url(#g)"/>
+  <rect x="7" y="8" width="10" height="2.1" rx="1.05" fill="#fff"/>
+  <rect x="7" y="11.95" width="6.6" height="2.1" rx="1.05" fill="#fff" opacity="0.92"/>
+  <rect x="7" y="15.9" width="3.2" height="2.1" rx="1.05" fill="#fff" opacity="0.84"/>
+</svg>

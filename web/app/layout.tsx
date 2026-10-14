@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { AccountMenu } from "@/components/AccountMenu";
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { SiteNav } from "@/components/SiteNav";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Video Summarizer",
+  title: "VideoSense — understand any video without watching it",
   description:
-    "Understand any video without watching it — a teachable explanation, chapters, and cited Q&A.",
+    "A teachable explanation of any video, section by section, with chapters, " +
+    "a practice set for coding videos, and answers that cite the moment they came from.",
 };
 
 // Runs before first paint so the stored theme is applied without a flash of
@@ -29,43 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           content is a scrolling column or a set of independently scrolling
           panels. Nothing below this point scrolls the window itself. */}
       <body className="app-shell">
-        <header className="topbar">
-          <Link href="/" className="flex items-center gap-2.5 no-underline">
-            <span className="brand-mark">
-              <svg viewBox="0 0 24 24" className="h-[17px] w-[17px]" fill="none">
-                <path d="M9 7.5v9l7-4.5-7-4.5z" fill="#fff" />
-              </svg>
-            </span>
-            <span className="hidden text-[0.95rem] font-bold tracking-tight text-ink sm:block">
-              AI Video Summarizer
-            </span>
-          </Link>
-
-          <nav className="flex items-center gap-1 text-[0.85rem] font-medium text-ink-muted">
-            <Link
-              href="/"
-              className="rounded-md px-3 py-1.5 no-underline transition-colors hover:bg-surface-hover hover:text-ink"
-            >
-              New
-            </Link>
-            <Link
-              href="/library"
-              className="rounded-md px-3 py-1.5 no-underline transition-colors hover:bg-surface-hover hover:text-ink"
-            >
-              Library
-            </Link>
-            <Link
-              href="/notebooks"
-              className="rounded-md px-3 py-1.5 no-underline transition-colors hover:bg-surface-hover hover:text-ink"
-            >
-              Notebooks
-            </Link>
-            <span className="mx-1 h-5 w-px bg-border" />
-            <ThemeToggle />
-            <AccountMenu />
-          </nav>
-        </header>
-
+        <SiteNav />
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </body>
     </html>

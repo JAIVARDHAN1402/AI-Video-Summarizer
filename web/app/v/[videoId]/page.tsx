@@ -25,6 +25,7 @@ import { Problems } from "@/components/Problems";
 import { Notes } from "@/components/Notes";
 import { Infographic } from "@/components/Infographic";
 import { AudioOverview } from "@/components/AudioOverview";
+import { RequireAuth } from "@/components/RequireAuth";
 
 const TABS = ["Explanation", "Scenes", "Transcript", "Chat", "Notes"] as const;
 type Tab = (typeof TABS)[number];
@@ -50,7 +51,7 @@ const STUDIO_TITLE: Record<StudioKind, string> = {
   infographic: "Infographic",
 };
 
-export default function VideoPage({ params }: { params: Promise<{ videoId: string }> }) {
+function VideoPageInner({ params }: { params: Promise<{ videoId: string }> }) {
   const { videoId } = use(params);
   const [data, setData] = useState<VideoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -762,5 +763,13 @@ function ReportView({
         </div>
       )}
     </div>
+  );
+}
+
+export default function VideoPage(props: any) {
+  return (
+    <RequireAuth what="this video">
+      <VideoPageInner {...props} />
+    </RequireAuth>
   );
 }

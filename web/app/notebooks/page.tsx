@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, type Notebook } from "@/lib/api";
+import { RequireAuth } from "@/components/RequireAuth";
 
-export default function Notebooks() {
+function NotebooksInner() {
   const router = useRouter();
   const [books, setBooks] = useState<Notebook[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -128,5 +129,13 @@ export default function Notebooks() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function Notebooks() {
+  return (
+    <RequireAuth what="your notebooks">
+      <NotebooksInner />
+    </RequireAuth>
   );
 }

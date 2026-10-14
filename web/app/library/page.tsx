@@ -4,8 +4,9 @@ import { Film, Search, Sparkles, Square, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { api, humanDuration, type JobView, type VideoSummary } from "@/lib/api";
+import { RequireAuth } from "@/components/RequireAuth";
 
-export default function Library() {
+function LibraryInner() {
   const [videos, setVideos] = useState<VideoSummary[] | null>(null);
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -266,5 +267,13 @@ export default function Library() {
         </details>
       )}
     </div>
+  );
+}
+
+export default function Library() {
+  return (
+    <RequireAuth what="your library">
+      <LibraryInner />
+    </RequireAuth>
   );
 }

@@ -17,8 +17,9 @@ import { use, useEffect, useMemo, useState } from "react";
 import { api, humanDuration, type Notebook, type VideoSummary } from "@/lib/api";
 import { Chat } from "@/components/Chat";
 import { Workspace } from "@/components/Workspace";
+import { RequireAuth } from "@/components/RequireAuth";
 
-export default function NotebookPage({
+function NotebookPageInner({
   params,
 }: {
   params: Promise<{ notebookId: string }>;
@@ -344,5 +345,13 @@ function AboutPanel({
         All notebooks
       </Link>
     </div>
+  );
+}
+
+export default function NotebookPage(props: any) {
+  return (
+    <RequireAuth what="this notebook">
+      <NotebookPageInner {...props} />
+    </RequireAuth>
   );
 }
