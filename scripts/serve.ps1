@@ -9,14 +9,21 @@
 #   .\scripts\serve.ps1            start both, print the URLs
 #   .\scripts\serve.ps1 -Stop      stop both
 #   .\scripts\serve.ps1 -Status    what is running
-#   .\scripts\serve.ps1 -Public    also open a public URL over Cloudflare
+#   .\scripts\serve.ps1 -Public    a throwaway Cloudflare URL, no account
+#   .\scripts\serve.ps1 -Ngrok     the same URL every time (needs an account)
+#
+# -Public is the quickest way to show someone the app: no account, no setup,
+# and a new random hostname every run. -Ngrok is for when the address has to
+# keep working - a report, a slide, somebody checking back tomorrow - and
+# reads VS_NGROK_DOMAIN from .env so the hostname is the account's own.
 #
 # Logs land in logs/api.log and logs/web.log.
 
 param(
     [switch]$Stop,
     [switch]$Status,
-    [switch]$Public
+    [switch]$Public,
+    [switch]$Ngrok
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,7 +38,7 @@ function Get-Running {
 
 function Show-Status {
     $saved = Get-Running
-    foreach ($name in @("api", "web", "tunnel")) {
+    foreach ($name in @("api", "web", "tunnel", "ngrok")) {
         $procId = $saved.$name
         $alive = $false
         if ($procId) { $alive = $null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue) }
@@ -44,7 +51,7 @@ if ($Status) { Show-Status; exit 0 }
 
 if ($Stop) {
     $saved = Get-Running
-    foreach ($name in @("api", "web", "tunnel")) {
+    foreach ($name in @("api", "web", "tunnel", "ngrok")) {
         $procId = $saved.$name
         if ($procId) {
             $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
@@ -90,11 +97,39 @@ if ($Public) {
     }
 }
 
+if ($Ngrok) {
+    # The domain belongs to the account, so it lives in .env beside the other
+    # deployment settings rather than being baked in here.
+    $domain = ""
+    $envFile = Join-Path $Root ".env"
+    if (Test-Path $envFile) {
+        foreach ($line in Get-Content $envFile) {
+            if ($line -match '^\s*VS_NGROK_DOMAIN\s*=\s*(.+?)\s*$') { $domain = $Matches[1] }
+        }
+    }
+    $ngrokArgs = @("http", "3000", "--log", "stdout")
+    if ($domain) {
+        $ngrokArgs += @("--domain", $domain)
+    } else {
+        Write-Warning "VS_NGROK_DOMAIN is not set in .env - starting with a random ngrok URL"
+    }
+    $ng = Start-Process -FilePath "ngrok" -ArgumentList $ngrokArgs `
+        -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $Logs "ngrok.log") `
+        -RedirectStandardError (Join-Path $Logs "ngrok.err.log")
+    $state.ngrok = $ng.Id
+    if ($domain) { $state.url = "https://$domain" }
+}
+
 $state | ConvertTo-Json | Set-Content $Pids -Encoding utf8
 
 "started detached - these survive this terminal closing"
 "  api  http://localhost:8000   (log: logs\api.log)"
 "  web  http://localhost:3000   (log: logs\web.log)"
 if ($Public) { "  public URL appears in logs\tunnel.err.log within ~10s" }
+if ($Ngrok) {
+    if ($state.url) { "  public  $($state.url)   (stable - same every run)" }
+    else { "  ngrok URL appears in logs\ngrok.log within ~10s" }
+}
 ""
 "stop with:  .\scripts\serve.ps1 -Stop"
