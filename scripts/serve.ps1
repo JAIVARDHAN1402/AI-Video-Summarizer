@@ -36,15 +36,35 @@ function Get-Running {
     try { return (Get-Content $Pids -Raw | ConvertFrom-Json) } catch { return @{} }
 }
 
+function Test-Port([int]$Port) {
+    # `npm run dev` is launched through cmd.exe, which hands off to node and
+    # exits, so the pid recorded at launch stops existing while the server is
+    # still serving. What is actually being asked is whether something is
+    # listening, so ask that instead.
+    $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+}
+
 function Show-Status {
     $saved = Get-Running
-    foreach ($name in @("api", "web", "tunnel", "ngrok")) {
+    foreach ($entry in @(
+        @{ name = "api";    port = 8000 },
+        @{ name = "web";    port = 3000 },
+        @{ name = "tunnel"; port = 0 },
+        @{ name = "ngrok";  port = 0 }
+    )) {
+        $name = $entry.name
         $procId = $saved.$name
-        $alive = $false
-        if ($procId) { $alive = $null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue) }
-        $state = if ($alive) { "running (pid $procId)" } else { "not running" }
+        if ($entry.port -gt 0) {
+            $state = if (Test-Port $entry.port) {
+                "listening on $($entry.port)"
+            } else { "not running" }
+        } else {
+            $alive = $procId -and ($null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue))
+            $state = if ($alive) { "running (pid $procId)" } else { "not running" }
+        }
         "{0,-8} {1}" -f $name, $state
     }
+    if ($saved.url) { "public   $($saved.url)" }
 }
 
 if ($Status) { Show-Status; exit 0 }
@@ -56,6 +76,17 @@ if ($Stop) {
         if ($procId) {
             $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
             if ($p) { Stop-Process -Id $procId -Force; "stopped $name (pid $procId)" }
+        }
+    }
+    # And whatever is still holding the ports, which for the web server is a
+    # node process cmd.exe left behind.
+    foreach ($port in @(8000, 3000)) {
+        foreach ($conn in @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) {
+            $owner = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+            if ($owner) {
+                Stop-Process -Id $owner.Id -Force -ErrorAction SilentlyContinue
+                "stopped whatever held port $port (pid $($owner.Id))"
+            }
         }
     }
     if (Test-Path $Pids) { Remove-Item $Pids }
