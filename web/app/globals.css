@@ -198,9 +198,14 @@ a.ts:hover {
   @apply flex h-[100dvh] flex-col overflow-hidden;
 }
 
+/* backdrop-blur makes this its own stacking context, which confines the
+   account dropdown's z-index to the inside of the header. A later sibling
+   that is merely position:relative - the landing page's hero - then paints
+   over the whole thing, and the sign-in field stops taking clicks. Giving
+   the header its own place in the stack is what puts it back on top. */
 .topbar {
-  @apply flex h-14 flex-shrink-0 items-center justify-between gap-3 border-b border-border
-    bg-surface/80 px-4 backdrop-blur-xl;
+  @apply relative z-50 flex h-14 flex-shrink-0 items-center justify-between gap-3
+    border-b border-border bg-surface/80 px-4 backdrop-blur-xl;
 }
 
 /* <main> is a plain block, so the workspace takes its height explicitly
