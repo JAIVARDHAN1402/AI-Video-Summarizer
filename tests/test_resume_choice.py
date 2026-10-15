@@ -116,3 +116,35 @@ def test_redis_workers_are_left_alone(monkeypatch):
 
     monkeypatch.setattr(server_config, "QUEUE_BACKEND", "redis")
     assert jobs.release_orphans() == 0
+
+
+# --- a resumed run must not advertise itself as a fast one ---------------
+# The library showed "0.0s" for an 11-hour video and "17s" for a 3-hour one,
+# and the run report turned the second into "624x faster than watching".
+# Both were resumed runs. The number is true of the run and worthless as a
+# measurement — and it is exactly the number that gets repeated.
+
+def test_a_time_too_short_to_be_real_is_called_partial():
+    from core import cache as c
+    assert c.run_was_partial(3 * 3600, 17.1) is True
+    assert c.run_was_partial(11 * 3600, 0.0) is True
+
+
+def test_a_plausible_full_run_is_not():
+    from core import cache as c
+    # 10 hours of video processed in 2h 10m: slow, real, and quotable.
+    assert c.run_was_partial(10 * 3600, 7825.8) is False
+
+
+def test_recorded_reuse_settles_it_without_guessing():
+    """Newer runs record which stages they only read back, which is exact;
+    the ratio is the fallback for runs recorded before that existed."""
+    from core import cache as c
+    assert c.run_was_partial(600, 400.0, ["ingest", "analyze"]) is True
+    assert c.run_was_partial(600, 400.0, []) is False
+
+
+def test_a_missing_time_is_not_treated_as_a_fast_run():
+    from core import cache as c
+    assert c.run_was_partial(3600, None) is True
+    assert c.run_was_partial(0, 100.0) is True

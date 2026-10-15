@@ -202,6 +202,9 @@ export interface VideoSummary {
   source_ref: string | null;
   video_type: string | null;
   processed_sec: number | null;
+  /** The recorded time is too short to be a full run — it resumed from cache. */
+  partial_run?: boolean;
+  reused_stages?: string[];
   has_understanding: boolean;
   has_highlight: boolean;
   mtime: number;

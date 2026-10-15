@@ -684,6 +684,9 @@ function ReportView({
 }) {
   const plan = meta?.plan || {};
   const total = timings.total;
+  // Same rule the API applies to the library: a full run of a video cannot
+  // take under a hundredth of its length, so a time that short is a resume.
+  const partial = Boolean(total && dur > 0 && total / dur < 0.01);
   const longest = Math.max(
     ...Object.entries(timings)
       .filter(([k]) => k !== "total")
@@ -692,7 +695,22 @@ function ReportView({
   );
   return (
     <div className="mx-auto flex max-w-[780px] flex-col gap-6">
-      {total && dur > 0 && (
+      {total && dur > 0 && partial && (
+        <div className="rounded-lg border border-warning/30 bg-warning/[0.06] p-4">
+          <p className="text-[0.84rem] font-semibold text-warning">
+            This run resumed from cached work
+          </p>
+          <p className="mt-1.5 text-[0.82rem] leading-relaxed text-ink-muted">
+            It finished in {humanDuration(total)}, but that is how long the
+            remaining stages took — not how long this {humanDuration(dur)} video
+            takes to process. Submit the link again and choose{" "}
+            <span className="font-semibold text-ink">Process fresh</span> for a
+            number worth quoting.
+          </p>
+        </div>
+      )}
+
+      {total && dur > 0 && !partial && (
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           {[
             [humanDuration(total), "Total time"],

@@ -58,6 +58,30 @@ STAGE_ARTIFACTS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Below this, a recorded time cannot describe a full run: even reading a
+# video's own metadata takes longer than a hundredth of its length. Runs that
+# resumed from the cache land here, and so do ones whose state was last
+# written by a standalone step.
+MIN_PLAUSIBLE_REALTIME_RATIO = 0.01
+
+
+def run_was_partial(duration_sec: float, processed_sec: Optional[float],
+                    reused_stages: Optional[list] = None) -> bool:
+    """Whether a recorded time is too short to be a full run of this video.
+
+    Resuming is the normal case after a failure and is not a problem; a
+    resumed run quietly reporting "17 seconds" for a three-hour video is,
+    because the number then gets read — and repeated — as the pipeline's
+    speed. Runs recorded before reused_stages existed are judged by whether
+    the time is physically possible at all.
+    """
+    if reused_stages:
+        return True
+    if not processed_sec or not duration_sec:
+        return True
+    return (processed_sec / duration_sec) < MIN_PLAUSIBLE_REALTIME_RATIO
+
+
 def completed_stages(video_id: str) -> dict[str, bool]:
     """Which stages this video already has results for, in pipeline order."""
     done: dict[str, bool] = {}

@@ -238,8 +238,19 @@ function LibraryInner() {
                   </span>
                 )}
                 {v.has_highlight && <span className="pill">reel</span>}
-                {v.processed_sec ? (
+                {v.processed_sec && !v.partial_run ? (
                   <span className="pill pill-success">in {humanDuration(v.processed_sec)}</span>
+                ) : v.processed_sec ? (
+                  <span
+                    className="pill"
+                    title={
+                      "This run reused work already cached, so its time describes " +
+                      "only the stages that actually ran — not how long the video " +
+                      "takes to process."
+                    }
+                  >
+                    resumed
+                  </span>
                 ) : null}
               </div>
             </div>

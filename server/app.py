@@ -263,7 +263,7 @@ def list_videos() -> list[dict]:
     as a flag rather than their contents.
     """
     import config as core_config
-    from core import pipeline
+    from core import cache as core_cache, pipeline
 
     out: list[dict] = []
     for vid in pipeline.list_cached_videos():
@@ -281,6 +281,16 @@ def list_videos() -> list[dict]:
                 "source_ref": meta.get("source_ref"),
                 "video_type": meta.get("video_type"),
                 "processed_sec": timings.get("total"),
+                # Whether that number describes real work. A resumed run
+                # reporting 17 seconds for a three-hour video is true of that
+                # run and useless as a measurement, and gets repeated as the
+                # pipeline's speed if nothing says otherwise.
+                "partial_run": core_cache.run_was_partial(
+                    meta.get("duration_sec") or 0.0,
+                    timings.get("total"),
+                    state.get("reused_stages"),
+                ),
+                "reused_stages": state.get("reused_stages") or [],
                 "has_understanding": (root / "understanding.json").exists(),
                 "has_highlight": (root / "highlight.mp4").exists(),
                 "mtime": root.stat().st_mtime,
