@@ -42,7 +42,9 @@ def sent(monkeypatch):
 
 # --- one spelling, one account -------------------------------------------
 
-def test_the_same_inbox_written_differently_is_one_account(session, sent):
+def test_the_same_inbox_written_differently_is_one_account(session, sent, monkeypatch):
+    # This is about identity, not about the resend window, so stand that down.
+    monkeypatch.setattr(config, "OTP_RESEND_SEC", 0)
     identity.request_code(session, "email", "Foo@Example.com")
     a = identity.verify_code(session, "email", "Foo@Example.com", sent["code"])
     identity.request_code(session, "email", "  foo@example.COM ")
@@ -282,3 +284,48 @@ def test_a_repeated_callback_does_not_extend_the_plan_twice(session, monkeypatch
     first = user.tier_expires_at
     billing.confirm(session, user, "order_1", "pay_1", signature)
     assert user.tier_expires_at == first
+
+
+# --- the resend window cannot be cleared by guessing ----------------------
+# Found by driving the real sign-in form: the window was measured from the
+# most recent *live* code, and six wrong guesses consume one. A script could
+# alternate between guessing and resending and mail a stranger's inbox
+# without limit, which is the one thing the window exists to stop.
+
+def test_burning_the_attempts_does_not_unlock_another_send(session, sent, monkeypatch):
+    monkeypatch.setattr(config, "OTP_MAX_ATTEMPTS", 3)
+    identity.request_code(session, "email", "victim@example.com")
+
+    for _ in range(config.OTP_MAX_ATTEMPTS + 1):
+        with pytest.raises(identity.IdentityError):
+            identity.verify_code(session, "email", "victim@example.com", "000000")
+
+    assert session.query(db.OtpCode).one().consumed is True, "the code is spent"
+    with pytest.raises(identity.IdentityError, match="just sent"):
+        identity.request_code(session, "email", "victim@example.com")
+
+
+def test_signing_in_does_not_unlock_another_send_either(session, sent):
+    identity.request_code(session, "email", "someone@example.com")
+    identity.verify_code(session, "email", "someone@example.com", sent["code"])
+    with pytest.raises(identity.IdentityError, match="just sent"):
+        identity.request_code(session, "email", "someone@example.com")
+
+
+def test_a_new_code_retires_the_previous_one(session, sent, monkeypatch):
+    """Two live codes for one inbox would double the guessing surface."""
+    monkeypatch.setattr(config, "OTP_RESEND_SEC", 0)
+    identity.request_code(session, "email", "a@b.com")
+    first = sent["code"]
+    identity.request_code(session, "email", "a@b.com")
+
+    with pytest.raises(identity.IdentityError):
+        identity.verify_code(session, "email", "a@b.com", first)
+    # The newest one still works.
+    assert identity.verify_code(session, "email", "a@b.com", sent["code"]) is not None
+
+
+def test_the_window_opens_again_once_it_has_passed(session, sent, monkeypatch):
+    monkeypatch.setattr(config, "OTP_RESEND_SEC", 0)
+    identity.request_code(session, "email", "a@b.com")
+    identity.request_code(session, "email", "a@b.com")   # no refusal

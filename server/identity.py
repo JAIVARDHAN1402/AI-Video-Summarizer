@@ -69,21 +69,33 @@ def request_code(session, channel: str, destination: str) -> dict[str, Any]:
     """Make a code, store its hash, and send it."""
     destination = normalise(channel, destination)
 
-    recent = (
+    # How recently anything was *sent* here, whatever became of it. Asking
+    # only about live codes left a hole: six wrong guesses consume a code, and
+    # the window then looks clear, so a script could alternate between
+    # guessing and resending and mail a stranger's inbox without limit. What
+    # is being rate-limited is the sending, not the code.
+    last_sent = (
         session.query(db.OtpCode)
-        .filter(db.OtpCode.destination == destination, db.OtpCode.consumed.is_(False))
+        .filter(db.OtpCode.destination == destination)
         .order_by(db.OtpCode.created_at.desc())
         .first()
     )
-    if recent is not None:
-        age = (_now() - db._aware(recent.created_at)).total_seconds()
+    if last_sent is not None:
+        age = (_now() - db._aware(last_sent.created_at)).total_seconds()
         if age < config.OTP_RESEND_SEC:
             raise IdentityError(
                 f"a code was just sent; try again in "
                 f"{int(config.OTP_RESEND_SEC - age)} seconds"
             )
-        # A new code supersedes the old one rather than living beside it.
-        recent.consumed = True
+
+    # A new code supersedes any live one rather than living beside it, so two
+    # codes are never valid for the same inbox at once.
+    for live in (
+        session.query(db.OtpCode)
+        .filter(db.OtpCode.destination == destination, db.OtpCode.consumed.is_(False))
+        .all()
+    ):
+        live.consumed = True
 
     code = "".join(secrets.choice("0123456789") for _ in range(config.OTP_LENGTH))
     row = db.OtpCode(
