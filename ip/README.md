@@ -1,67 +1,51 @@
-# Intellectual property
+# Invention disclosure drafts
 
-Disclosure drafts for the VIT IPR Cell, with the blank templates they were
-written onto.
+Two disclosures, filled from what this repository measures rather than from
+recollection. Every figure in them is reproducible from the code and the
+recorded state; none was rounded for effect.
 
-| File | What it is |
+| File | For |
 | --- | --- |
-| `IDF-B-Patent-SLA-Scheduler-FILLED.docx` | Patent disclosure for the scheduler |
-| `IDF-Design-Registration-Interface-FILLED.docx` | Design disclosure for the interface |
-| `IDF-B-template-blank.pdf` | The blank IDF-B template |
-| `IDF-Design-template-blank.pdf` | The blank design-registration template |
+| `IDF-B-Patent-SLA-Scheduler-FILLED.docx` | Patent — the SLA-constrained scheduler |
+| `IDF-Design-Registration-Interface-FILLED.docx` | Design registration — the interface |
+| `IDF-B-template-blank.pdf`, `IDF-Design-template-blank.pdf` | The blank forms, for comparison |
 
-## What is claimed
+## What the patent disclosure claims, and what it does not
 
-The patent disclosure claims the **scheduling method**, not the pipeline. The
-pipeline is assembled from published models (Whisper, YOLO, CLIP, EasyOCR,
-Gemini, MiniLM, FAISS) and is explicitly disclaimed in item 9.
+The principal claim is the scheduler: a per-hardware-class execution cost
+maintained as an affine function of input duration, fitted online, driving a
+joint choice of hardware class and model fidelity against a wall-clock
+deadline. The models themselves — Whisper, YOLO, CLIP, the language models —
+are used as interchangeable components and are explicitly not claimed.
 
-The two elements put forward as novel:
+Section 3(k) of the Patents Act excludes a computer programme per se, an
+algorithm and a mathematical method. The disclosure is therefore written
+around the technical effect on resource utilisation, which is what is
+measured in item 8, rather than around the computation.
 
-1. Choosing the **hardware class and the model-fidelity configuration
-   together** against one wall-clock deadline, the configuration being sized
-   to the measured speed of the class that was chosen.
-2. Learning each class's cost as an **affine function of input length** —
-   fixed setup plus a per-unit rate — online, by least squares over five
-   running sums, rather than as a single rate.
+## Before this is submitted
 
-Both live in `server/scheduler.py`; `core/perf.py` holds the per-stage budget
-planner the router hands work to.
+- [ ] **Prior-art search** through the VIT IPR Cell. No patent numbers are
+      cited in item 3 because none have been verified, and inventing one in a
+      legal document is not an option. The search categories the inventors
+      believe matter are listed there instead.
+- [ ] **Three drawings** for item 7: the architecture, the measured cost
+      against input length with both models plotted, and the routing flowchart.
+- [ ] **Seven screen representations** for item 3 of the design form.
+- [ ] **Contributor details** — name, address, email, phone — in item 7 of the
+      design form, and signatures in item 8.
+- [ ] **Review date** in item 5 of the design form.
+- [ ] **A decision on the public endpoint.** The running system is currently
+      reachable over the internet through a tunnelled address with no access
+      control on its landing page. Both forms record this as a fact and ask
+      the Cell whether it amounts to prior publication. Until that is
+      answered, the prudent course is to put the endpoint behind sign-in or
+      take it down.
 
-## Evidence the disclosure cites
+## Reproducing the figures
 
-Every figure in item 8 is a measurement from this repository, reproducible
-from the recorded data:
-
-- `sla_observations` in `server_state.db` — 28 rows, each holding predicted
-  time, actual time, the deadline and whether it was met, alongside the
-  fixed-configuration baseline recorded for the same job.
-- `scheduler_costs` — the learned per-class cost models.
-- `tests/test_fleet_scheduler.py` — tests that the affine fit recovers known
-  parameters and that an unsupported fit is refused.
-
-The headline result: an 11 h 40 min recording was processed in 90.2 minutes.
-A single-rate model predicted 316 minutes for it; the affine model predicts
-94.7. That gap is the technical problem the disclosure is built around.
-
-## Outstanding before filing
-
-- [ ] **Patent prior-art search** (Indian and international). Not done. No
-      patent numbers appear in the disclosure because none have been
-      verified. The three categories to search are named under item 3.
-- [ ] Confirm the dates of the internal review presentations (design form,
-      item 4).
-- [ ] Capture the seven screen representations listed in the design form,
-      item 3.
-- [ ] Complete the address, email and phone fields.
-- [ ] Prepare the three drawings named in item 7.
-
-## Disclosure timeline, as known
-
-- 20 Aug 2026 — first commit; repository public.
-- 6 Sep 2026 — repository made private, and still private.
-- The three-panel interface described in the design disclosure was built
-  after that date.
-- No public deployment has taken place. Indian law provides no general grace
-  period for prior disclosure, so a public deployment should wait on the IPR
-  Cell's advice.
+```bash
+pytest tests/                                     # 188 tests
+curl localhost:8000/api/scheduler/sla             # deadline attainment
+python -m ml.evaluate --checkpoint ml/checkpoints/importance.pt --baselines
+```
