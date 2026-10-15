@@ -29,8 +29,11 @@ measured in item 8, rather than around the computation.
       cited in item 3 because none have been verified, and inventing one in a
       legal document is not an option. The search categories the inventors
       believe matter are listed there instead.
-- [ ] **Three drawings** for item 7: the architecture, the measured cost
-      against input length with both models plotted, and the routing flowchart.
+- [x] **Figure 2** — figure2-cost-model.png, regenerated from the recorded
+      observations by make_figure2.py. Resumed runs are excluded and the
+      exclusion is printed on the figure.
+- [ ] **Figures 1 and 3** for item 7: the system architecture, and the
+      routing flowchart.
 - [ ] **Seven screen representations** for item 3 of the design form.
 - [ ] **Contributor details** — name, address, email, phone — in item 7 of the
       design form, and signatures in item 8.

@@ -462,11 +462,34 @@ def record_outcome(job: Job) -> None:
     duration_min = duration / 60.0
     observed_per_min = total / duration_min
 
-    # A run served from cache did no work, so its wall-clock says nothing about
-    # the class's throughput — but it is by far the cheapest-looking sample, so
-    # a single one convinces the router that the class is effectively free and
-    # it stops measuring anything else. core.perf learned this the hard way and
-    # grew calibration guards; this path never got them.
+    # A run that reused cached stages did only part of the work, so its
+    # wall-clock says nothing about the class's throughput — and it is by far
+    # the cheapest-looking sample, so a few of them convince the router that a
+    # class is nearly free and the predictions it then makes are optimistic.
+    #
+    # The floor below was the only guard, and it was set at a level no real run
+    # could reach rather than at the level resumed runs actually reach: six
+    # observations between 2.6 and 9.7 s/video-min passed it, against 13 to 25
+    # for the full runs on the same machine. The pipeline now records which
+    # stages a run merely read back, so ask that instead of guessing from the
+    # ratio; the floor stays as a backstop for runs recorded before it did.
+    reused = []
+    try:
+        from core import cache as core_cache
+
+        if job.video_id:
+            state = core_cache.read_json(job.video_id, "state") or {}
+            reused = state.get("reused_stages") or []
+    except Exception:  # pragma: no cover - never fail a job over telemetry
+        logger.debug("could not read reuse state for %s", job.id, exc_info=True)
+
+    if reused:
+        logger.info(
+            "job %s on %s reused %d cached stage(s); not calibrating from it",
+            job.id, worker_class, len(reused),
+        )
+        return
+
     if observed_per_min < _MIN_CREDIBLE_PER_MIN:
         logger.info(
             "job %s on %s finished in %.1fs for %.1f min of video (%.2f s/video-min) "

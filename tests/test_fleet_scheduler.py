@@ -169,3 +169,63 @@ def test_a_fit_from_one_video_length_is_not_trusted():
         fit = scheduler._fit_for(db, wc)
 
     assert fit is None or not fit.credible, "a flat x-range cannot support a fit"
+
+
+# --- a resumed run must not teach the scheduler ---------------------------
+# Six of thirty-one recorded observations were resumed runs: 2.6 to 9.7
+# seconds per video-minute, against 13 to 25 for the full runs on the same
+# machine. They passed the only guard there was, and a cheap-looking sample
+# is exactly what convinces a router that a class is nearly free.
+
+def test_a_run_that_reused_stages_is_not_calibrated_from(monkeypatch, tmp_path):
+    from core import cache as core_cache
+    from server.db import Job, JobStatus
+
+    monkeypatch.setattr(core_cache.config, "CACHE_ROOT", tmp_path)
+    vid = "abc123"
+    (tmp_path / vid).mkdir(parents=True)
+    core_cache.write_json(vid, "state", {
+        "stage": "done", "timings": {"total": 114.9},
+        "reused_stages": ["ingest", "analyze"],
+    })
+
+    before = dict(_fit_sums("cpu-fast"))
+    job = Job(
+        id="j-resumed", source_ref="x", video_id=vid,
+        status=JobStatus.DONE, worker_class="cpu-fast",
+        duration_sec=43.4 * 60, timings={"total": 114.9},
+    )
+    scheduler.record_outcome(job)
+    assert _fit_sums("cpu-fast") == before, "nothing should have been learned"
+
+
+def test_a_full_run_still_calibrates(monkeypatch, tmp_path):
+    from core import cache as core_cache
+    from server.db import Job, JobStatus
+
+    monkeypatch.setattr(core_cache.config, "CACHE_ROOT", tmp_path)
+    vid = "def456"
+    (tmp_path / vid).mkdir(parents=True)
+    core_cache.write_json(vid, "state", {"stage": "done", "timings": {"total": 159.2}})
+
+    before = dict(_fit_sums("cpu-fast"))
+    job = Job(
+        id="j-full", source_ref="y", video_id=vid,
+        status=JobStatus.DONE, worker_class="cpu-fast",
+        duration_sec=11.4 * 60, timings={"total": 159.2},
+    )
+    scheduler.record_outcome(job)
+    assert _fit_sums("cpu-fast") != before, "a real run is what the model is for"
+
+
+def _fit_sums(worker_class: str) -> dict:
+    from server.db import SchedulerCost, session
+
+    with session() as db:
+        return {
+            c.key: c.seconds
+            for c in db.query(SchedulerCost)
+            .filter(SchedulerCost.worker_class == worker_class)
+            .all()
+            if c.key.startswith("fit:")
+        }
