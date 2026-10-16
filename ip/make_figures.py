@@ -165,91 +165,116 @@ def figure1():
 
 # ===================================================================== FIG 3
 def figure3():
-    fig, ax = plt.subplots(figsize=(11.0, 9.6))
+    """The routing decision.
+
+    Laid out on a single spine with every outcome on one right-hand column,
+    so the path a job takes reads top to bottom and the four ways it can end
+    line up for comparison. The earlier version spread small boxes over a
+    large canvas, which left the type too small to read at print size.
+    """
+    fig, ax = plt.subplots(figsize=(11.0, 12.6))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, 116)
+    ax.set_ylim(0, 118)
     ax.axis("off")
 
-    box(ax, 30, 97, 40, 6.5,
-        "Job arrives: duration known, deadline known", fc="#ffffff", bold=True)
+    SPINE = 38          # centre of the decision column
+    OUT_X, OUT_W = 66, 33   # the outcome column
+    GREEN, GREEN_FILL = "#2f7a46", "#eaf6ee"
 
-    box(ax, 22, 88, 56, 7.5,
-        "FOR EACH HARDWARE CLASS — predict the total execution time",
-        fc=BLUE_FILL, ec=BLUE, bold=True)
-    arrow(ax, (50, 97), (50, 95.5))
+    # ---------------- phase 1: predict -----------------------------------
+    ax.add_patch(FancyBboxPatch(
+        (2, 78.5), 96, 34, boxstyle="round,pad=0.004,rounding_size=0.015",
+        linewidth=1.0, edgecolor="#b9c2cf", facecolor="#fafbfc", zorder=0))
+    ax.text(4.5, 109.4, "1  PREDICT", fontsize=9.5, color=BLUE,
+            fontweight="bold", va="center")
 
-    # three sources of a prediction
+    box(ax, 26, 103, 48, 7.0,
+        "A job arrives: input length and deadline are known",
+        fc="#ffffff", bold=True, fontsize=9.2)
+
+    box(ax, 18, 93.5, 64, 6.6,
+        "For each hardware class, predict the total execution time",
+        fc=BLUE_FILL, ec=BLUE, bold=True, fontsize=9.2)
+    arrow(ax, (50, 103), (50, 100.1))
+
     srcs = [
-        (2, "Affine fit is credible\n≥ 4 samples and\nlengths spread ≥ 2×\n\n"
-            "fixed + rate × minutes", BLUE_FILL, BLUE),
-        (35, "Only a coarse ratio\nis available\n\nper-minute × minutes", GREY_FILL, INK),
-        (68, "Nothing measured yet\n\nseed × minutes\n(samples = 0)", RED_FILL, RED),
+        (5, "Affine fit is credible\n\n\u2265 4 samples, and the\nlengths seen differ by \u2265 2\u00d7\n\n"
+            "fixed + rate \u00d7 minutes", BLUE_FILL, BLUE),
+        (36, "Only a coarse ratio\n\n\n\n\nper-minute \u00d7 minutes", GREY_FILL, "#6b7280"),
+        (67, "Nothing measured yet\n\n\n\n\nseed \u00d7 minutes", RED_FILL, RED),
     ]
     for x, text, fc, ec in srcs:
-        box(ax, x, 72, 30, 13, text, fc=fc, ec=ec, fontsize=7.8)
-    for x in (17, 50, 83):
-        arrow(ax, (50, 88), (x, 85), lw=0.9, rad=0.0)
+        box(ax, x, 80.5, 28, 11.5, text, fc=fc, ec=ec, fontsize=8.2)
+    for x in (19, 50, 81):
+        arrow(ax, (50, 93.5), (x, 92.0), lw=0.9)
 
-    box(ax, 22, 62, 56, 7.0,
-        "cost = predicted seconds × the class's hourly rate",
-        fc=BLUE_FILL, ec=BLUE)
-    for x in (17, 50, 83):
-        arrow(ax, (x, 72), (x if x == 50 else 50, 69), lw=0.9)
+    box(ax, 18, 70.5, 64, 6.0,
+        "cost  =  predicted seconds  \u00d7  the class\u2019s hourly rate",
+        fc=BLUE_FILL, ec=BLUE, fontsize=9.2)
+    for x in (19, 50, 81):
+        arrow(ax, (x, 80.5), (50, 76.5), lw=0.9, rad=0.0)
 
-    # --- the four branches, in the order the code tries them --------------
-    diamond(ax, 50, 53, 46, 11,
-            "Any class with no measurements at all?")
-    arrow(ax, (50, 62), (50, 58.5))
+    # ---------------- phase 2: choose ------------------------------------
+    ax.text(4.5, 64.5, "2  CHOOSE", fontsize=9.5, color=AMBER,
+            fontweight="bold", va="center")
+    arrow(ax, (50, 70.5), (SPINE, 62.4), lw=1.1, rad=-0.08)
 
-    box(ax, 72, 48.5, 27, 9,
-        "PROBE IT\ncheapest unmeasured class\n\na seed is too crude to\nrule a class in or out",
-        fc=AMBER_FILL, ec=AMBER, fontsize=7.6)
-    arrow(ax, (73, 53), (72, 53), color=AMBER)
-    label(ax, 69.0, 55.2, "yes", color=AMBER, fontsize=7.6)
+    steps = [
+        dict(y=56, q="Is any class\nunmeasured?",
+             out="PROBE IT\ncheapest unmeasured class",
+             why="a seed is too crude to rule\na class in or out",
+             fc=AMBER_FILL, ec=AMBER),
+        dict(y=41, q="Of those that meet the deadline,\nis any still thinly measured?\n(fewer than 5 samples)",
+             out="PROBE IT\nfewest samples, then cheapest",
+             why="exploring only where it cannot\nbreak the deadline",
+             fc=AMBER_FILL, ec=AMBER),
+        dict(y=26, q="Does any class\nmeet the deadline?",
+             out="TAKE THE CHEAPEST OF THEM",
+             why="not the fastest \u2014 headroom bought\nby a bigger machine is paid for\nand never used",
+             fc=GREEN_FILL, ec=GREEN),
+    ]
 
-    diamond(ax, 50, 38, 46, 11,
-            "Any class that meets the deadline\nis still thinly measured (< 5 samples)?")
-    arrow(ax, (50, 47.5), (50, 43.5))
-    label(ax, 52.6, 45.6, "no", fontsize=7.6, ha="left")
+    for i, s in enumerate(steps):
+        y = s["y"]
+        diamond(ax, SPINE, y, 44, 12.5, s["q"], fontsize=8.4)
 
-    box(ax, 72, 33.5, 27, 9,
-        "PROBE IT\nfewest samples, then cheapest\n\nexploring only where it\ncannot break the deadline",
-        fc=AMBER_FILL, ec=AMBER, fontsize=7.6)
-    arrow(ax, (73, 38), (72, 38), color=AMBER)
-    label(ax, 69.0, 40.2, "yes", color=AMBER, fontsize=7.6)
+        # outcome, on the shared right-hand column
+        h = 9.5
+        box(ax, OUT_X, y - h / 2, OUT_W, h,
+            s["out"] + "\n\n" + s["why"], fc=s["fc"], ec=s["ec"], fontsize=8.0)
+        arrow(ax, (SPINE + 22, y), (OUT_X, y), color=s["ec"], lw=1.2)
+        label(ax, (SPINE + 22 + OUT_X) / 2, y + 1.9, "yes", color=s["ec"], fontsize=8.0)
 
-    diamond(ax, 50, 23, 46, 11,
-            "Any class meets the deadline?")
-    arrow(ax, (50, 32.5), (50, 28.5))
-    label(ax, 52.6, 30.6, "no", fontsize=7.6, ha="left")
+        # fall through to the next decision
+        if i < len(steps) - 1:
+            arrow(ax, (SPINE, y - 6.25), (SPINE, steps[i + 1]["y"] + 6.25), lw=1.1)
+            label(ax, SPINE + 2.6, y - 9.2, "no", fontsize=8.0, ha="left")
 
-    box(ax, 66, 18.5, 33, 9,
-        "CHEAPEST THAT MEETS IT\n\nnot the fastest: headroom bought\nby a bigger machine is paid for\nand never used",
-        fc="#eaf6ee", ec="#2f7a46", fontsize=7.6)
-    arrow(ax, (73, 23), (66, 23), color="#2f7a46")
-    label(ax, 63.0, 25.2, "yes", color="#2f7a46", fontsize=7.6)
+    # the last "no"
+    arrow(ax, (SPINE, 26 - 6.25), (SPINE, 14.5), color=RED, lw=1.2)
+    label(ax, SPINE + 2.6, 17.4, "no", color=RED, fontsize=8.0, ha="left")
 
-    box(ax, 18, 6, 44, 10,
-        "DEADLINE IS ALREADY LOST\n\nchoose the fastest class and report the\nexpected overrun in advance, rather than\n"
-        "accepting the job and missing it silently",
-        fc=RED_FILL, ec=RED, fontsize=7.8)
-    arrow(ax, (50, 17.5), (40, 16), color=RED)
-    label(ax, 46, 17.6, "no", color=RED, fontsize=7.6, ha="left")
+    box(ax, 10, 5.0, 52, 9.5,
+        "THE DEADLINE IS ALREADY LOST\n\n"
+        "take the fastest class, and report the expected\noverrun before the job starts",
+        fc=RED_FILL, ec=RED, fontsize=8.2)
 
-    box(ax, 66, 6, 33, 8,
-        "Attach the execution plan\ncomputed with that class's own\ncost model, and enqueue",
-        fc="#ffffff", fontsize=7.8)
-    arrow(ax, (82, 18.5), (82, 14))
+    box(ax, OUT_X, 5.0, OUT_W, 9.5,
+        "Attach the execution plan computed\nwith that class\u2019s own cost model,\nand enqueue the job",
+        fc="#ffffff", fontsize=8.2)
+    arrow(ax, (OUT_X + OUT_W / 2, 21.25), (OUT_X + OUT_W / 2, 14.5), color=GREEN, lw=1.2)
+    arrow(ax, (62, 9.75), (OUT_X, 9.75), color=RED, lw=1.0, dashed=True)
 
-    ax.text(50, 111,
-            "Figure 3 — The routing decision, as implemented. Exploration never overrides the "
+    ax.text(50, 116,
+            "Figure 3 \u2014 The routing decision, as implemented. Exploration never overrides the "
             "deadline;\namong the classes that keep it, the cheapest is taken rather than the fastest.",
-            ha="center", va="center", fontsize=10.0, color=INK, linespacing=1.5)
+            ha="center", va="center", fontsize=10.2, color=INK, linespacing=1.5)
 
     fig.tight_layout()
     fig.savefig(f"{OUT_DIR}/figure3-routing.png", dpi=200,
                 bbox_inches="tight", facecolor="white")
     print(f"wrote {OUT_DIR}/figure3-routing.png")
+
 
 
 if __name__ == "__main__":
