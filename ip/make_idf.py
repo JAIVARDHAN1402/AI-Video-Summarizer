@@ -97,15 +97,15 @@ def build_idf_b():
     # ---- 1
     heading(doc, "1. Title of the invention:")
     body(doc,
-         "A scheduler that gets video-processing jobs finished on time: it learns how long "
-         "each computer actually takes, then sends every job to the cheapest computer that "
-         "can still meet the deadline.")
+         "System and Method for Deadline-Aware Scheduling of Video-Processing Workloads "
+         "Across Heterogeneous Hardware Using a Self-Learning Execution-Cost Model")
     body(doc, "")
     body(doc,
-         "Formal title, for the patent application: Deadline-constrained scheduling of "
-         "multimodal video-understanding workloads by jointly selecting a hardware class and "
-         "a model-fidelity configuration, using a per-class execution-cost model learned "
-         "online as an affine function of input length.", italic=True)
+         "Scope, stated in full: scheduling of multimodal video-understanding workloads "
+         "under a wall-clock deadline, in which a hardware class and a model-fidelity "
+         "configuration are selected jointly, and in which the execution cost of each "
+         "hardware class is maintained as an affine function of input length, fitted online "
+         "from completed jobs.", italic=True)
 
     # ---- 2
     heading(doc, "2. Field / Area of invention:")
