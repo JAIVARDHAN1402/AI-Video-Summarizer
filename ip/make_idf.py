@@ -16,6 +16,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
 IP = "ip"
+SUFFIX = os.environ.get("VS_IDF_SUFFIX", "")   # e.g. ".NEW" when Word has the file open
 
 # ---------------------------------------------------------------- helpers
 
@@ -96,13 +97,15 @@ def build_idf_b():
     # ---- 1
     heading(doc, "1. Title of the invention:")
     body(doc,
-         "Deadline-constrained scheduling of multimodal video-understanding workloads by "
-         "jointly selecting a hardware class and a model-fidelity configuration, using a "
-         "per-class execution-cost model learned online as an affine function of input "
-         "length.")
+         "A scheduler that gets video-processing jobs finished on time: it learns how long "
+         "each computer actually takes, then sends every job to the cheapest computer that "
+         "can still meet the deadline.")
+    body(doc, "")
     body(doc,
-         "Short title: Cost-aware, SLA-constrained scheduler with online affine cost learning "
-         "for heterogeneous inference fleets.")
+         "Formal title, for the patent application: Deadline-constrained scheduling of "
+         "multimodal video-understanding workloads by jointly selecting a hardware class and "
+         "a model-fidelity configuration, using a per-class execution-cost model learned "
+         "online as an affine function of input length.", italic=True)
 
     # ---- 2
     heading(doc, "2. Field / Area of invention:")
@@ -504,7 +507,7 @@ def build_idf_b():
     r.italic = True
     r.font.size = Pt(9)
 
-    out = f"{IP}/IDF-B-Patent-SLA-Scheduler-FILLED.docx"
+    out = f"{IP}/IDF-B-Patent-SLA-Scheduler-FILLED{SUFFIX}.docx"
     doc.save(out)
     print(f"wrote {out}")
 
@@ -697,7 +700,7 @@ def build_design():
         body(doc, "")
         body(doc, "-------------------------------------------------------------------")
 
-    out = f"{IP}/IDF-Design-Registration-Interface-FILLED.docx"
+    out = f"{IP}/IDF-Design-Registration-Interface-FILLED{SUFFIX}.docx"
     doc.save(out)
     print(f"wrote {out}")
 
