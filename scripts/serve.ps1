@@ -58,6 +58,18 @@ function Show-Status {
             $state = if (Test-Port $entry.port) {
                 "listening on $($entry.port)"
             } else { "not running" }
+        } elseif ($name -eq "ngrok") {
+            # Ask the agent, not the pid we recorded. The watcher in
+            # keep-tunnel.ps1 starts its own agent when a session drops, so
+            # the pid here goes stale and -Status would report "not running"
+            # about a tunnel that is serving.
+            $url = $null
+            try {
+                $r = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" `
+                    -TimeoutSec 3 -ErrorAction Stop
+                if ($r.tunnels -and $r.tunnels.Count -gt 0) { $url = $r.tunnels[0].public_url }
+            } catch { }
+            $state = if ($url) { "serving $url" } else { "not running" }
         } else {
             $alive = $procId -and ($null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue))
             $state = if ($alive) { "running (pid $procId)" } else { "not running" }
