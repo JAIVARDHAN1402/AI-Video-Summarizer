@@ -129,6 +129,24 @@ if ($Public) {
 }
 
 if ($Ngrok) {
+    # A free ngrok account may hold one agent session at a time. Starting a
+    # second one while the first is alive makes them fight over the domain and
+    # one of them loses, which is how the public URL kept answering
+    # ERR_NGROK_3200 a few seconds after a restart. So: if an agent is already
+    # serving, leave it alone.
+    $agent = $null
+    try {
+        $agent = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" `
+            -TimeoutSec 3 -ErrorAction Stop
+    } catch { $agent = $null }
+
+    $alreadyServing = ($agent -and $agent.tunnels -and $agent.tunnels.Count -gt 0)
+    if ($alreadyServing) {
+        $state.url = $agent.tunnels[0].public_url
+        "ngrok is already serving $($state.url) - leaving it alone"
+        "  (run -Stop first if you want a fresh agent)"
+    }
+
     # The domain belongs to the account, so it lives in .env beside the other
     # deployment settings rather than being baked in here.
     $domain = ""
@@ -144,12 +162,14 @@ if ($Ngrok) {
     } else {
         Write-Warning "VS_NGROK_DOMAIN is not set in .env - starting with a random ngrok URL"
     }
-    $ng = Start-Process -FilePath "ngrok" -ArgumentList $ngrokArgs `
-        -WindowStyle Hidden -PassThru `
-        -RedirectStandardOutput (Join-Path $Logs "ngrok.log") `
-        -RedirectStandardError (Join-Path $Logs "ngrok.err.log")
-    $state.ngrok = $ng.Id
-    if ($domain) { $state.url = "https://$domain" }
+    if (-not $alreadyServing) {
+        $ng = Start-Process -FilePath "ngrok" -ArgumentList $ngrokArgs `
+            -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $Logs "ngrok.log") `
+            -RedirectStandardError (Join-Path $Logs "ngrok.err.log")
+        $state.ngrok = $ng.Id
+        if ($domain) { $state.url = "https://$domain" }
+    }
 }
 
 $state | ConvertTo-Json | Set-Content $Pids -Encoding utf8
