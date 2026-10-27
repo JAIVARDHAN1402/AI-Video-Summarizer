@@ -238,7 +238,22 @@ def generate(video_id: str, *, force: bool = False) -> dict[str, Any]:
 
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
-        parts = asyncio.run(_synthesise(turns, workdir))
+        try:
+            parts = asyncio.run(_synthesise(turns, workdir))
+        except Exception as exc:
+            # The speech endpoint is a third-party service that can refuse a
+            # connection outright — it answered 403 to every request for a
+            # whole afternoon during development, because the token scheme
+            # changed under an older client. Surfacing that as a readable
+            # failure beats a stack trace in the browser, and tells the
+            # reader the script was written even though it could not be read
+            # aloud.
+            raise RuntimeError(
+                "the script was written, but speech synthesis refused the "
+                f"request ({type(exc).__name__}). The audio overview needs "
+                "edge-tts 7.3.1 or newer and an outbound connection to "
+                "Microsoft's speech endpoint."
+            ) from exc
         cache.set_state(video_id, "audio", 0.85, "Joining the audio...")
 
         at = 0.0

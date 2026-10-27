@@ -48,4 +48,6 @@ streamlit==1.37.0
 rouge-score==0.1.2
 bert-score==0.3.13
 pytest==8.3.2
-edge-tts
+# 7.3.1 or newer: earlier releases compute the Sec-MS-GEC token in a way the
+# speech endpoint now rejects with a 403, which breaks the audio overview.
+edge-tts>=7.3.1

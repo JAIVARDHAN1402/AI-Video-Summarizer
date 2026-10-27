@@ -215,3 +215,11 @@ RAZORPAY_KEY_SECRET = os.getenv("VS_RAZORPAY_KEY_SECRET", "").strip()
 RAZORPAY_MODE = os.getenv("VS_RAZORPAY_MODE", "test").strip().lower()
 PREMIUM_PRICE_PAISE = int(os.getenv("VS_PREMIUM_PRICE_PAISE", "19900"))   # Rs 199
 PREMIUM_DAYS = int(os.getenv("VS_PREMIUM_DAYS", "30"))
+
+# --- On-demand work inside a request ---------------------------------------
+# The highlight reel is normally produced by M7 during the run. Serving a
+# video whose reel is missing will build one, which is fine for a lecture and
+# not fine for a ten-hour tutorial: past this many minutes of source video the
+# request is refused with an explanation rather than left hanging.
+HIGHLIGHT_ONDEMAND_MAX_MIN = float(
+    os.getenv("VS_HIGHLIGHT_ONDEMAND_MAX_MIN", "45"))

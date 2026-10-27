@@ -404,8 +404,25 @@ def highlight_reel(video_id: str) -> FileResponse:
     from core import pipeline
 
     _ensure_local_artifacts(video_id)
-    if pipeline.get_meta(video_id) is None:
+    meta = pipeline.get_meta(video_id)
+    if meta is None:
         raise HTTPException(404, "video not found")
+
+    # Building the reel inside this request is only reasonable for a short
+    # video. A ten-hour tutorial with no cached reel used to hold the
+    # connection open until the client gave up, which the browser reports as
+    # a socket hang-up and the page shows as a tile that never loads. Past
+    # the cap, say so instead of hanging.
+    existing = pipeline.get_highlight(video_id, build=False)
+    if not existing or not Path(existing).exists():
+        minutes = (meta.get("duration_sec") or 0) / 60.0
+        if minutes > config.HIGHLIGHT_ONDEMAND_MAX_MIN:
+            raise HTTPException(
+                409,
+                f"no highlight reel was produced for this {minutes:.0f}-minute "
+                "video, and it is too long to build while you wait. Re-run the "
+                "video with the highlight stage enabled to get one.",
+            )
     path = pipeline.get_highlight(video_id, build=True)
     if not path or not Path(path).exists():
         raise HTTPException(

@@ -76,11 +76,15 @@ const STAGES = [
   { n: "M7", name: "Rank", body: "A trained model scores which scenes matter, and cuts the highlight reel." },
 ];
 
+// Every figure here is one the recorded state can be asked for: the first two
+// come from the SLA table, the third from ml/checkpoints/cv_report.json, the
+// fourth from the test run. The earlier set quoted a 67-minute lecture that no
+// surviving run matches, so it was replaced with one that does.
 const EVIDENCE = [
-  { figure: "5.3 min", label: "to process a 67-minute lecture", note: "was ~50 minutes before the scheduler and the parallel ASR" },
-  { figure: "63.3%", label: "of jobs met their time budget", note: "against 6.7% for a fixed configuration, measured over 30 recorded runs" },
-  { figure: "0.265", label: "highlight F1 on TVSum", note: "human agreement is 0.260 and random is 0.166, measured in this pipeline" },
-  { figure: "180", label: "tests passing", note: "every fix in this project arrived with the test that catches it again" },
+  { figure: "8.9 min", label: "to process an 87-minute lecture", note: "9.9x faster than watching it, measured end to end on one run" },
+  { figure: "64.5%", label: "of jobs met their time budget", note: "against 6.5% for a fixed configuration, over 31 recorded runs" },
+  { figure: "0.262", label: "highlight F1 on TVSum", note: "human agreement is 0.260 and random is 0.166, 5-fold cross-validated" },
+  { figure: "190", label: "tests passing", note: "every fix in this project arrived with the test that catches it again" },
 ];
 
 export default function Landing() {
