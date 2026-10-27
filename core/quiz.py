@@ -244,7 +244,11 @@ def generate(
 
     questions = _clean(result.data, count)
     if not questions:
-        raise llm.LLMError("the model returned no usable questions")
+        # Name the model: when the primary provider is out of quota the chain
+        # falls through to the next one, and "the model" alone leaves the
+        # reader guessing which of them actually answered.
+        raise llm.LLMError(
+            f"{result.model} returned no usable questions")
 
     quiz = {
         "video_id": video_id,

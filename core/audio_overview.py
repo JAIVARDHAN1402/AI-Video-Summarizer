@@ -230,7 +230,8 @@ def generate(video_id: str, *, force: bool = False) -> dict[str, Any]:
     )
     turns = _clean_turns(result.data)
     if len(turns) < 4:
-        raise llm.LLMError("the model did not produce a usable conversation")
+        raise llm.LLMError(
+            f"{result.model} did not produce a usable conversation")
 
     cache.set_state(video_id, "audio", 0.45, f"Speaking {len(turns)} turns...")
     dest = audio_path(video_id)
