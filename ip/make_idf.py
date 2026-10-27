@@ -75,11 +75,24 @@ def shade(cell, hexcolor):
     el.append(sh)
 
 
-def figure(doc, path, caption):
+def figure(doc, path, caption, max_h=7.6):
+    """Place an image, scaled to the text width but never taller than a page.
+
+    A tall narrow view (a single panel at full height) would otherwise be
+    placed at the full text width and run off the page.
+    """
     if not os.path.exists(path):
         body(doc, f"[{caption} — file not found at {path}]", italic=True)
         return
-    doc.add_picture(path, width=Inches(6.3))
+    width = 6.3
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if im.height / im.width * width > max_h:
+                width = max_h * im.width / im.height
+    except Exception:
+        pass
+    doc.add_picture(path, width=Inches(width))
     doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
     cap = doc.add_paragraph()
     r = cap.add_run(caption)
@@ -595,29 +608,33 @@ def build_design():
     body(doc,
          "The subject of this design is a screen display, not a solid article, so the six "
          "orthographic views of an object do not apply. The corresponding screen "
-         "representations are listed below; the IPR Cell's guidance is requested on the view "
-         "set and numbering it prefers before filing.", italic=True)
+         "representations are set out below and reproduced on the following pages; the IPR "
+         "Cell's guidance is requested on the view set and numbering it prefers before "
+         "filing.", italic=True)
 
     vt = doc.add_table(rows=0, cols=3)
     vt.style = "Table Grid"
     views = [
-        ("View", "Representation", "Status"),
-        ("(i)", "Front view — the working three-panel screen with a processed video open, "
-                "light theme", "To be captured"),
+        ("View", "Representation", "File"),
+        ("(i)", "Front view — the working three-panel screen with a processed video open",
+         "view-1-front.png"),
         ("(ii)", "Rear view — not applicable; the entry screen is submitted in its place, "
                  "being the opposite face of the application as a user encounters it",
-         "To be captured"),
+         "view-2-rear.png"),
         ("(iii)", "Left side view — the source panel at full height, shown alone",
-         "To be captured"),
+         "view-3-left.png"),
         ("(iv)", "Right side view — the studio tile column at full height, shown alone",
-         "To be captured"),
+         "view-4-right.png"),
         ("(v)", "Top view — the header bar with the device mark, navigation and account "
-                "control", "To be captured"),
-        ("(vi)", "Bottom view — the entry screen's figure band and footer", "To be captured"),
-        ("(vii)", "Top perspective view — the working screen with the account panel open "
-                  "over it", "To be captured"),
-        ("—", "Device mark, supplied separately at not less than 1000 × 1000 pixels",
-         "To be captured"),
+                "control", "view-5-top.png"),
+        ("(vi)", "Bottom view — the entry screen's closing band and footer",
+         "view-6-bottom.png"),
+        ("(vii)", "Top perspective view — a 45-degree view is not meaningful for a screen "
+                  "display, and tilting one shears the type rather than showing the design; "
+                  "a further screen of the same design, the submission screen, is submitted "
+                  "in its place", "view-7-submission.png"),
+        ("—", "Device mark, supplied separately at 2400 × 2400 pixels",
+         "view-8-device-mark.png"),
     ]
     for i, (a, b, c) in enumerate(views):
         cells = vt.add_row().cells
@@ -633,8 +650,49 @@ def build_design():
                 shade(cell, "E7E9EC")
     body(doc, "")
     body(doc,
-         "To be captured at a single fixed window size, on a white background, with no "
-         "browser chrome, no cursor and no personal data visible.", italic=True)
+         "All views were captured at one fixed window size of 1440 × 900 at a device pixel "
+         "ratio of two, on a white background, with no browser chrome, no cursor, no "
+         "development overlay and no personal data: the account shown is a test account "
+         "created for this purpose. Views (iii) to (vi) are regions of those same captures, "
+         "cut at boundaries measured from the running interface rather than estimated by "
+         "eye.", italic=True)
+    body(doc,
+         "Two states described in item 2 — the notice panel for a decision the reader must "
+         "make, and the account panel — open over a screen in response to a click and so do "
+         "not appear in the views above. They can be supplied if the Cell wishes them "
+         "numbered among the representations.", italic=True)
+
+    for path, cap in [
+        ("view-1-front.png",
+         "View (i) — front view: the working three-panel screen."),
+        ("view-2-rear.png",
+         "View (ii) — in place of a rear view: the entry screen."),
+        ("view-3-left.png",
+         "View (iii) — left side view: the source panel, shown alone."),
+        ("view-4-right.png",
+         "View (iv) — right side view: the studio tile column, shown alone."),
+        ("view-5-top.png",
+         "View (v) — top view: the header bar."),
+        ("view-6-bottom.png",
+         "View (vi) — bottom view: the entry screen's closing band and footer."),
+        ("view-7-submission.png",
+         "View (vii) — in place of a perspective view: the submission screen."),
+        ("view-8-device-mark.png",
+         "The device mark, at 2400 × 2400 pixels."),
+    ]:
+        figure(doc, f"{IP}/views/{path}", cap)
+
+    body(doc,
+         "The following are not numbered views. They are submitted to show that the same "
+         "arrangement, proportions and ornament carry across the remaining screens and "
+         "across both colourways, the colourways being variants of one design.", italic=True)
+    for path, cap in [
+        ("extra-1-library-screen.png", "The library screen."),
+        ("extra-2-notebooks-screen.png", "The notebooks screen."),
+        ("extra-3-dark-colourway.png", "The working screen, dark colourway."),
+        ("extra-4-dark-submission.png", "The submission screen, dark colourway."),
+    ]:
+        figure(doc, f"{IP}/views/{path}", cap)
 
     # ---- 4
     heading(doc,
